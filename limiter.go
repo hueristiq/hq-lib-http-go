@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 )
 
 // RateLimiter paces request attempts. It is the minimal surface the client
@@ -28,13 +29,20 @@ type RateLimiter interface {
 // one with additional behavior.
 type RateLimiterFunc func(ctx context.Context) (err error)
 
+// Compile-time guard ensuring [RateLimiterFunc] satisfies [RateLimiter].
+var _ RateLimiter = RateLimiterFunc(nil)
+
 // Wait calls f(ctx).
 //
 // Parameters:
 //   - ctx (context.Context): the context bounding the wait.
 //
 // Returns:
-//   - err (error): whatever f returns.
+//   - err (error): whatever f returns, or a nil-limiter error when f is nil.
 func (f RateLimiterFunc) Wait(ctx context.Context) (err error) {
+	if f == nil {
+		return errors.New("http.RateLimiterFunc: nil limiter")
+	}
+
 	return f(ctx)
 }

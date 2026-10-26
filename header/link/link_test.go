@@ -147,7 +147,7 @@ func TestParse(t *testing.T) {
 		{
 			name:     "empty",
 			raw:      "",
-			expected: nil,
+			expected: hqgohttplink.WebLinks{},
 		},
 		{
 			name: "single link",
@@ -266,17 +266,17 @@ func TestParse(t *testing.T) {
 		{
 			name:     "only invalid entries",
 			raw:      `rel="next"`,
-			expected: nil,
+			expected: hqgohttplink.WebLinks{},
 		},
 		{
 			name:     "blank header",
 			raw:      "   ",
-			expected: nil,
+			expected: hqgohttplink.WebLinks{},
 		},
 		{
 			name:     "empty entries",
 			raw:      ",,",
-			expected: nil,
+			expected: hqgohttplink.WebLinks{},
 		},
 		{
 			name: "empty parameters are skipped",
@@ -481,4 +481,54 @@ func TestParse_RepeatedParametersKeepFirst(t *testing.T) {
 	require.Len(t, links, 1)
 	assert.Equal(t, "next", links[0].Rel)
 	assert.Equal(t, "first", links[0].Param("title"))
+}
+
+func TestWebLink_ParamCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	link := hqgohttplink.WebLink{
+		Rel:    "next",
+		Params: map[string]string{"Title": "Next Page"},
+	}
+
+	assert.True(t, link.HasParam("title"))
+	assert.Equal(t, "Next Page", link.Param("TITLE"))
+	assert.True(t, link.HasParam("REL"))
+	assert.Equal(t, "next", link.Param("Rel"))
+}
+
+func TestParse_EmptyURIReference(t *testing.T) {
+	t.Parallel()
+
+	links := hqgohttplink.Parse(`<>; rel="self"`)
+
+	require.Len(t, links, 1)
+	assert.Empty(t, links[0].URL)
+	assert.Equal(t, "self", links[0].Rel)
+}
+
+func TestParse_CaseInsensitiveParameters(t *testing.T) {
+	t.Parallel()
+
+	links := hqgohttplink.Parse(`<https://example.com>; Title="first"; title="second"`)
+
+	require.Len(t, links, 1)
+	assert.Equal(t, "first", links[0].Param("title"))
+	assert.True(t, links[0].HasParam("TITLE"))
+	assert.Len(t, links[0].Params, 1)
+}
+
+func TestWebLink_StringSanitizesCRLF(t *testing.T) {
+	t.Parallel()
+
+	link := hqgohttplink.WebLink{
+		URL:    "https://example.com/\r\nInjected: yes",
+		Rel:    "next\r\n",
+		Params: map[string]string{"title": "a\r\nb"},
+	}
+
+	formatted := link.String()
+
+	assert.NotContains(t, formatted, "\r")
+	assert.NotContains(t, formatted, "\n")
 }

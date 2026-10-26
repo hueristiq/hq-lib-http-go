@@ -1,7 +1,3 @@
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261026175339-92e77c60dfb4 h1:tWPPPqwVS2SISHgIG/QLqM9DhRm5uelETQcv6ItSVb8=
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261026175339-92e77c60dfb4/go.mod h1:nlLZAx5Q3nHZqpnUaemxx1HLdQ7RGYm7x84dTdRxt+U=
-github.com/hueristiq/hq-lib-url-go v0.0.0-20261026184836-0001e21ddd27 h1:I6CCkHnGrLrhB+u55u7rFgSPYKNCFundNeRumYgFxC8=
-github.com/hueristiq/hq-lib-url-go v0.0.0-20261026184836-0001e21ddd27/go.mod h1:CsEFn+RPQcLRNL0i+prcCYaCiFy0tCKUxgRyh3B03IM=
 github.com/quic-go/go-ossfuzz-seeds v0.1.0 h1:APacT+iIaNF6fd8AGEiN3bT/Jtkd2jz4v4TzM7MFjy0=
 github.com/quic-go/go-ossfuzz-seeds v0.1.0/go.mod h1:3IOHRbJIc+L6YKMwfDtJAM9Vj9k0YY4muhuyUYk5tbk=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=

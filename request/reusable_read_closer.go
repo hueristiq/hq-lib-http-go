@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -31,6 +32,9 @@ type ReusableReadCloser struct {
 	data   []byte
 	reader *bytes.Reader
 }
+
+// Compile-time guard ensuring [ReusableReadCloser] satisfies [io.ReadCloser].
+var _ io.ReadCloser = (*ReusableReadCloser)(nil)
 
 // Read reads up to len(p) bytes from the internal data into the provided
 // buffer p. It implements the io.Reader interface and returns io.EOF once the
@@ -103,10 +107,6 @@ func (r *ReusableReadCloser) clone() (clone *ReusableReadCloser) {
 //
 // The caller must hold r.mu.
 func (r *ReusableReadCloser) reset() {
-	if r == nil {
-		return
-	}
-
 	if r.reader == nil {
 		r.reader = bytes.NewReader(r.data)
 
@@ -143,12 +143,14 @@ var ErrBodyTooLarge = errors.New("request body exceeds the configured limit")
 //   - []byte: Copies the provided byte slice.
 //   - *[]byte: Dereferences the pointer and copies the byte slice.
 //   - string: Converts the string into a byte slice.
-//   - *bytes.Buffer: Copies the buffer's underlying bytes.
+//   - *bytes.Buffer: Copies the buffer's unread bytes.
 //   - *bytes.Reader, *strings.Reader, *io.SectionReader, io.ReadSeeker, io.Reader:
-//     Reads the entire content into a byte slice using io.ReadAll.
+//     Reads the remaining content into a byte slice using io.ReadAll.
 //
 // The payload is owned by the returned closer. Later mutations of a []byte,
-// *[]byte, or *bytes.Buffer argument do not change the request body.
+// *[]byte, or *bytes.Buffer argument do not change the request body. An input
+// that implements io.Closer is closed after it has been consumed, including
+// when reading fails.
 //
 // Parameters:
 //   - raw (any): the input data to be converted to a byte slice. The function handles
@@ -170,6 +172,8 @@ func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err
 // The input types are the same as [NewReusableReadCloser]. The limit is checked
 // before copying byte slices, strings, and buffers, and while reading an
 // io.Reader, so an oversized payload is rejected without being fully retained.
+// An input that implements io.Closer is closed after it has been consumed,
+// including when reading fails or the limit is exceeded.
 //
 // Parameters:
 //   - raw (any): the input data to convert.
@@ -230,6 +234,18 @@ func NewReusableReadCloserLimited(raw any, limit int64) (reusableReadCloser *Reu
 			r = rr
 		}
 
+		if isNilReader(r) {
+			data = []byte{}
+
+			break
+		}
+
+		if closer, ok := r.(io.Closer); ok {
+			defer func() {
+				_ = closer.Close()
+			}()
+		}
+
 		if limit > 0 && limit != math.MaxInt64 {
 			data, err = io.ReadAll(io.LimitReader(r, limit+1))
 		} else {
@@ -269,4 +285,27 @@ func exceedsLimit(size, limit int64) (exceeds bool) {
 	exceeds = limit > 0 && size > limit
 
 	return exceeds
+}
+
+// isNilReader reports whether r is nil or holds a typed-nil value, so a
+// typed-nil pointer is treated as an empty body instead of panicking on Read.
+//
+// Parameters:
+//   - r (io.Reader): the reader to inspect.
+//
+// Returns:
+//   - nilReader (bool): true when r is nil or a typed-nil value.
+func isNilReader(r io.Reader) (nilReader bool) {
+	if r == nil {
+		return true
+	}
+
+	value := reflect.ValueOf(r)
+
+	switch value.Kind() { //nolint:exhaustive // Only nilable kinds are relevant.
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		nilReader = value.IsNil()
+	}
+
+	return nilReader
 }

@@ -17,11 +17,11 @@ import (
 // Fields:
 //   - URL (string): the target URI for the link (e.g., "https://api.example.com/page/2").
 //   - Rel (string): the link relation type (e.g., "next", "prev", "author").
-//   - Params (map[string]string): a map of additional key/value pairs associated with
-//     the link, with keys kept exactly as written in the header (e.g.,
-//     {"title": "Next Page"}). A repeated parameter keeps its first value;
-//     parameters that allow multiple values, such as hreflang, collapse to the
-//     first one.
+//   - Params (map[string]string): a map of additional key/value pairs associated
+//     with the link, with keys kept as written in the header (e.g.,
+//     {"title": "Next Page"}). Parameter names are compared case-insensitively;
+//     a repeated parameter keeps its first spelling and value. Parameters that
+//     allow multiple values, such as hreflang, collapse to the first one.
 type WebLink struct {
 	URL    string
 	Rel    string
@@ -38,7 +38,8 @@ type WebLink struct {
 // representation. If the Rel field is non-empty, it is appended as a `rel="value"`
 // parameter. When there are no parameters at all, no trailing "; " is emitted.
 // The method ensures proper quoting of parameter values to comply with
-// HTTP Link header syntax.
+// HTTP Link header syntax. CR and LF characters in the URL, keys, and values
+// are replaced with spaces so the result stays a single header value.
 //
 // Returns:
 //   - link (string): a formatted string representation of the WebLink.
@@ -58,7 +59,7 @@ func (l WebLink) String() (link string) {
 	params := make([]string, 0, len(keys)+1)
 
 	for _, key := range keys {
-		params = append(params, key+"="+quoteLinkValue(l.Params[key]))
+		params = append(params, sanitizeLinkToken(key)+"="+quoteLinkValue(l.Params[key]))
 	}
 
 	if l.Rel != "" {
@@ -66,9 +67,9 @@ func (l WebLink) String() (link string) {
 	}
 
 	if len(params) == 0 {
-		link = fmt.Sprintf("<%s>", l.URL)
+		link = fmt.Sprintf("<%s>", sanitizeLinkToken(l.URL))
 	} else {
-		link = fmt.Sprintf("<%s>; %s", l.URL, strings.Join(params, "; "))
+		link = fmt.Sprintf("<%s>; %s", sanitizeLinkToken(l.URL), strings.Join(params, "; "))
 	}
 
 	return link
@@ -76,9 +77,8 @@ func (l WebLink) String() (link string) {
 
 // HasParam checks whether the Link contains a parameter with the specified key.
 //
-// The key is case-sensitive, matching the key exactly as written in the header.
-// This method is useful for checking the presence of specific parameters, such
-// as "title" or "type", before attempting to retrieve their values.
+// Parameter names are matched case-insensitively. The "rel" parameter is stored
+// in [WebLink.Rel] and is reported when it is non-empty.
 //
 // Parameters:
 //   - key (string): the parameter name to check for.
@@ -86,17 +86,24 @@ func (l WebLink) String() (link string) {
 // Returns:
 //   - hasParam (bool): true if the parameter exists, false otherwise.
 func (l WebLink) HasParam(key string) (hasParam bool) {
-	_, hasParam = l.Params[key]
+	if strings.EqualFold(key, "rel") {
+		return l.Rel != ""
+	}
 
-	return hasParam
+	for existing := range l.Params {
+		if strings.EqualFold(existing, key) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Param retrieves the value of the parameter identified by the provided key.
 //
-// If the parameter does not exist, an empty string is returned. The key is
-// case-sensitive, matching the key exactly as written in the header. This method
-// provides a safe way to access parameter values without directly interacting
-// with the Params map.
+// If the parameter does not exist, an empty string is returned. Parameter names
+// are matched case-insensitively. The "rel" parameter is stored in
+// [WebLink.Rel] and is returned when it is non-empty.
 //
 // Parameters:
 //   - key (string): the parameter name to retrieve.
@@ -104,9 +111,17 @@ func (l WebLink) HasParam(key string) (hasParam bool) {
 // Returns:
 //   - param (string): the value of the parameter, or an empty string if not found.
 func (l WebLink) Param(key string) (param string) {
-	param = l.Params[key]
+	if strings.EqualFold(key, "rel") {
+		return l.Rel
+	}
 
-	return param
+	for existing, value := range l.Params {
+		if strings.EqualFold(existing, key) {
+			return value
+		}
+	}
+
+	return ""
 }
 
 // WebLinks is a slice of WebLink values, representing a collection of links.
@@ -177,10 +192,10 @@ func (l WebLinks) FilterByRel(rel string) (links WebLinks) {
 // input into individual links at commas that appear outside angle brackets, so a
 // comma inside the URL (in its path or query) does not split an entry. It then
 // extracts the URL (enclosed in angle brackets) and parses parameters, including
-// the "rel" attribute (matched case-insensitively). Parameter keys are kept
-// exactly as written, and a repeated parameter keeps its first value. If the
-// input is empty or contains only invalid entries, an empty WebLinks slice is
-// returned.
+// the "rel" attribute. Parameter names are matched case-insensitively, and a
+// repeated parameter keeps its first value. An empty URI reference (`<>`, the
+// current document) is preserved. If the input is empty or contains only invalid
+// entries, an empty non-nil WebLinks slice is returned.
 //
 // Parameters:
 //   - raw (string): the raw HTTP Link header string to parse.
@@ -188,6 +203,8 @@ func (l WebLinks) FilterByRel(rel string) (links WebLinks) {
 // Returns:
 //   - links (WebLinks): a slice of WebLink objects representing the parsed links.
 func Parse(raw string) (links WebLinks) {
+	links = make(WebLinks, 0)
+
 	if raw == "" {
 		return links
 	}
@@ -206,7 +223,10 @@ func Parse(raw string) (links WebLinks) {
 			Params: make(map[string]string),
 		}
 
-		relSet := false
+		var (
+			relSet  bool
+			urlSeen bool
+		)
 
 		for _, piece := range splitLinkParameters(chunk) {
 			piece = strings.TrimSpace(piece)
@@ -215,8 +235,9 @@ func Parse(raw string) (links WebLinks) {
 			}
 
 			if len(piece) >= 2 && piece[0] == '<' && piece[len(piece)-1] == '>' {
-				if link.URL == "" {
+				if !urlSeen {
 					link.URL = piece[1 : len(piece)-1]
+					urlSeen = true
 				}
 
 				continue
@@ -232,12 +253,26 @@ func Parse(raw string) (links WebLinks) {
 					link.Rel = val
 					relSet = true
 				}
-			} else if _, exists := link.Params[key]; !exists {
+
+				continue
+			}
+
+			duplicate := false
+
+			for existing := range link.Params {
+				if strings.EqualFold(existing, key) {
+					duplicate = true
+
+					break
+				}
+			}
+
+			if !duplicate {
 				link.Params[key] = val
 			}
 		}
 
-		if link.URL != "" {
+		if urlSeen {
 			links = append(links, link)
 		}
 	}
@@ -395,8 +430,28 @@ func ParseMultiple(headers []string) (links WebLinks) {
 	return links
 }
 
-// quoteLinkValue serializes value as an RFC 7230 quoted-string, escaping only
-// the quote and backslash characters.
+// sanitizeLinkToken replaces CR and LF with spaces so a token cannot split the
+// resulting header value.
+//
+// Parameters:
+//   - value (string): the token to sanitize.
+//
+// Returns:
+//   - sanitized (string): the token with CR and LF replaced.
+func sanitizeLinkToken(value string) (sanitized string) {
+	sanitized = strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' {
+			return ' '
+		}
+
+		return r
+	}, value)
+
+	return sanitized
+}
+
+// quoteLinkValue serializes value as an RFC 7230 quoted-string, escaping the
+// quote and backslash characters and replacing CR and LF with spaces.
 //
 // Parameters:
 //   - value (string): the parameter value.
@@ -409,11 +464,15 @@ func quoteLinkValue(value string) (quoted string) {
 	b.WriteByte('"')
 
 	for i := range len(value) {
-		if value[i] == '"' || value[i] == '\\' {
+		switch value[i] {
+		case '"', '\\':
 			b.WriteByte('\\')
+			b.WriteByte(value[i])
+		case '\r', '\n':
+			b.WriteByte(' ')
+		default:
+			b.WriteByte(value[i])
 		}
-
-		b.WriteByte(value[i])
 	}
 
 	b.WriteByte('"')

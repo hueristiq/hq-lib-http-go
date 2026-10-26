@@ -505,13 +505,12 @@ func TestRequestBuilder_WithOptions(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(5),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 6}),
 	)
 
 	res, err := client.Request().
 		URL(server.URL).
-		WithOptions(hqgohttp.WithRequestRetryMax(1)).
+		WithOptions(hqgohttp.WithRequestRetrier(testRetrier{maxAttempts: 2})).
 		Context(t.Context()).Do()
 
 	require.Error(t, err)
@@ -598,6 +597,78 @@ func TestRequestBuilder_Context(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, "ok", readBody(t, res))
+	})
+
+	t.Run("builder background context overrides the client default", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL := newOKServer(t)
+
+		defaultCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+
+		res, err := client.Request().Context(context.Background()).URL(serverURL).Do()
+
+		require.NoError(t, err)
+		assert.Equal(t, "ok", readBody(t, res))
+	})
+
+	t.Run("builder nil context overrides the client default", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL := newOKServer(t)
+
+		defaultCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+
+		res, err := client.Request().Context(nil).URL(serverURL).Do() //nolint:staticcheck // Context(nil) is an explicit override.
+
+		require.NoError(t, err)
+		assert.Equal(t, "ok", readBody(t, res))
+	})
+
+	t.Run("request New background context overrides the client default", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL := newOKServer(t)
+
+		defaultCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+
+		req, err := hqgohttprequest.New(context.Background(), http.MethodGet, serverURL, nil)
+
+		require.NoError(t, err)
+
+		res, err := client.Do(req)
+
+		require.NoError(t, err)
+		assert.Equal(t, "ok", readBody(t, res))
+	})
+
+	t.Run("request New nil context uses the client default", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL := newOKServer(t)
+
+		defaultCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+
+		req, err := hqgohttprequest.New(nil, http.MethodGet, serverURL, nil) //nolint:staticcheck // A nil context means no explicit context.
+
+		require.NoError(t, err)
+
+		res, err := client.Do(req)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Nil(t, res)
 	})
 
 	t.Run("request context overrides the client default", func(t *testing.T) {
@@ -925,8 +996,7 @@ func TestRequestBuilder_MultipartRetry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithRetryIdempotent(false),
 	)
 
@@ -1071,7 +1141,11 @@ func TestRequestBuilder_URLResolution_HostPort(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse("http://" + raw)
+		})
+
+		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
 
 		res, err := client.Request().
 			URL(strings.TrimPrefix(serverURL, "http://") + "/direct").
@@ -1092,7 +1166,11 @@ func TestRequestBuilder_URLResolution_HostPort(t *testing.T) {
 		_, port, err := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
 		require.NoError(t, err)
 
-		client := hqgohttp.New()
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse("http://" + raw)
+		})
+
+		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
 
 		res, err := client.Request().
 			URL("localhost:" + port + "/direct").
@@ -1118,8 +1196,13 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		host := serverURL[len("http://"):]
 
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse("http://" + raw)
+		})
+
 		res, err := client.Request().
 			URL(host + "/schemeless").
+			WithOptions(hqgohttp.WithRequestURLParser(parser)).
 			Context(t.Context()).Do()
 
 		require.NoError(t, err)
@@ -1172,8 +1255,13 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		client := hqgohttp.New()
 
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse(strings.ReplaceAll(raw, "%zz", "%25zz"))
+		})
+
 		res, err := client.Request().
 			URL(serverURL + "/%zz").
+			WithOptions(hqgohttp.WithRequestURLParser(parser)).
 			Context(t.Context()).Do()
 
 		require.NoError(t, err)
@@ -1197,58 +1285,64 @@ func TestRequestBuilder_PathOnlyURLRejected(t *testing.T) {
 	}
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has no host")
+	assert.Contains(t, err.Error(), "not absolute")
 }
 
 func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 	t.Parallel()
 
-	var attempts atomic.Int32
+	newServer := func(t *testing.T) (serverURL string, attempts *atomic.Int32) {
+		t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts.Add(1)
+		attempts = new(atomic.Int32)
 
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts.Add(1)
 
-			return
-		}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
 
-		_, _ = w.Write(body)
-	}))
+				return
+			}
 
-	t.Cleanup(server.Close)
+			_, _ = w.Write(body)
+		}))
+
+		t.Cleanup(server.Close)
+
+		return server.URL, attempts
+	}
 
 	t.Run("raw body over the limit", func(t *testing.T) {
 		t.Parallel()
 
-		before := attempts.Load()
+		serverURL, attempts := newServer(t)
 
 		client := hqgohttp.New(
 			hqgohttp.WithMaxRequestBodySize(4),
-			hqgohttp.WithRetryMax(0),
 		)
 
-		res, err := client.Post(server.URL, "0123456789")
+		res, err := client.Post(serverURL, "0123456789")
 
 		if res != nil {
 			require.NoError(t, res.Body.Close())
 		}
 
 		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
-		assert.Equal(t, before, attempts.Load(), "Expected the oversized request not to be sent")
+		assert.Zero(t, attempts.Load(), "Expected the oversized request not to be sent")
 	})
 
 	t.Run("raw body within the limit", func(t *testing.T) {
 		t.Parallel()
 
+		serverURL, _ := newServer(t)
+
 		client := hqgohttp.New(
 			hqgohttp.WithMaxRequestBodySize(4),
-			hqgohttp.WithRetryMax(0),
 		)
 
-		res, err := client.Post(server.URL, "0123")
+		res, err := client.Post(serverURL, "0123")
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -1259,16 +1353,15 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 	t.Run("encoded JSON over the limit", func(t *testing.T) {
 		t.Parallel()
 
-		before := attempts.Load()
+		serverURL, attempts := newServer(t)
 
 		client := hqgohttp.New(
 			hqgohttp.WithMaxRequestBodySize(4),
-			hqgohttp.WithRetryMax(0),
 		)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
-			URL(server.URL).
+			URL(serverURL).
 			JSON(map[string]string{"value": "0123456789"}).
 			Do()
 
@@ -1277,21 +1370,20 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 		}
 
 		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
-		assert.Equal(t, before, attempts.Load(), "Expected the oversized request not to be sent")
+		assert.Zero(t, attempts.Load(), "Expected the oversized request not to be sent")
 	})
 
 	t.Run("pre-built request over the limit", func(t *testing.T) {
 		t.Parallel()
 
-		before := attempts.Load()
+		serverURL, attempts := newServer(t)
 
-		req, err := hqgohttprequest.New(t.Context(), http.MethodPost, server.URL, "0123456789")
+		req, err := hqgohttprequest.New(t.Context(), http.MethodPost, serverURL, "0123456789")
 
 		require.NoError(t, err)
 
 		client := hqgohttp.New(
 			hqgohttp.WithMaxRequestBodySize(4),
-			hqgohttp.WithRetryMax(0),
 		)
 
 		res, err := client.Do(req)
@@ -1301,22 +1393,21 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 		}
 
 		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
-		assert.Equal(t, before, attempts.Load(), "Expected the oversized request not to be sent")
+		assert.Zero(t, attempts.Load(), "Expected the oversized request not to be sent")
 	})
 
 	t.Run("stream with a known length over the limit", func(t *testing.T) {
 		t.Parallel()
 
-		before := attempts.Load()
+		serverURL, attempts := newServer(t)
 
 		client := hqgohttp.New(
 			hqgohttp.WithMaxRequestBodySize(4),
-			hqgohttp.WithRetryMax(0),
 		)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
-			URL(server.URL).
+			URL(serverURL).
 			BodyStream(strings.NewReader("0123456789"), 10).
 			Do()
 
@@ -1325,7 +1416,128 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 		}
 
 		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
-		assert.Equal(t, before, attempts.Load(), "Expected the oversized request not to be sent")
+		assert.Zero(t, attempts.Load(), "Expected the oversized request not to be sent")
+	})
+}
+
+func TestRequestBuilder_BodyReaderHonorsMaxRequestBodySize(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit = 4
+		size  = 1 << 20
+	)
+
+	t.Run("builder body", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &countingReader{Reader: strings.NewReader(strings.Repeat("x", size))}
+
+		res, err := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(limit)).Request().
+			Method(hqgohttpmethod.POST).
+			URL("https://example.com").
+			Body(reader).
+			Context(t.Context()).Do()
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
+		assert.LessOrEqual(t, reader.read, int64(limit+1),
+			"Expected buffering to stop at the configured limit")
+	})
+
+	t.Run("client post", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &countingReader{Reader: strings.NewReader(strings.Repeat("x", size))}
+
+		res, err := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(limit)).Post("https://example.com", reader)
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
+		assert.LessOrEqual(t, reader.read, int64(limit+1),
+			"Expected buffering to stop at the configured limit")
+	})
+}
+
+func TestRequestBuilder_EncoderErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+
+		res, err := hqgohttp.New().Request().
+			Method(hqgohttpmethod.POST).
+			URL("https://example.com").
+			JSON(make(chan int)).
+			Context(t.Context()).Do()
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "json")
+	})
+
+	t.Run("xml", func(t *testing.T) {
+		t.Parallel()
+
+		res, err := hqgohttp.New().Request().
+			Method(hqgohttpmethod.POST).
+			URL("https://example.com").
+			XML(make(chan int)).
+			Context(t.Context()).Do()
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "xml")
+	})
+}
+
+func TestRequestBuilder_XMLAndFormHonorMaxRequestBodySize(t *testing.T) {
+	t.Parallel()
+
+	client := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(4))
+
+	t.Run("xml", func(t *testing.T) {
+		t.Parallel()
+
+		res, err := client.Request().
+			Method(hqgohttpmethod.POST).
+			URL("https://example.com").
+			XML(strings.Repeat("x", 32)).
+			Context(t.Context()).Do()
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
+	})
+
+	t.Run("form", func(t *testing.T) {
+		t.Parallel()
+
+		res, err := client.Request().
+			Method(hqgohttpmethod.POST).
+			URL("https://example.com").
+			Form(url.Values{"key": {"0123456789"}}).
+			Context(t.Context()).Do()
+
+		if res != nil {
+			require.NoError(t, res.Body.Close())
+		}
+
+		require.ErrorIs(t, err, hqgohttp.ErrRequestBodyTooLarge)
 	})
 }
 
@@ -1409,7 +1621,7 @@ func TestMultipartForm_Stream(t *testing.T) {
 
 		require.NoError(t, err)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1441,8 +1653,7 @@ func TestRequestBuilder_BodyStreamIsNotReplayed(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Request().
@@ -1499,7 +1710,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1521,7 +1732,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1543,7 +1754,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1599,6 +1810,77 @@ func TestStripSensitiveHeadersOnRedirect(t *testing.T) {
 			"Expected only the listed headers to be stripped")
 	})
 
+	t.Run("multi-hop cross host stays stripped", func(t *testing.T) {
+		t.Parallel()
+
+		policy := hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")
+
+		req := newRequest(t, "https://other.example/third")
+		via := []*http.Request{
+			newRequest(t, "https://example.com/start"),
+			newRequest(t, "https://other.example/second"),
+		}
+
+		require.NoError(t, policy(req, via))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	})
+
+	t.Run("multi-hop same host keeps the headers", func(t *testing.T) {
+		t.Parallel()
+
+		policy := hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")
+
+		req := newRequest(t, "https://example.com/third")
+		via := []*http.Request{
+			newRequest(t, "https://example.com/start"),
+			newRequest(t, "https://example.com/second"),
+		}
+
+		require.NoError(t, policy(req, via))
+		assert.Equal(t, "secret", req.Header.Get("X-Api-Key"))
+	})
+
+	t.Run("multi-hop downgrade strips the headers", func(t *testing.T) {
+		t.Parallel()
+
+		policy := hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")
+
+		req := newRequest(t, "https://example.com/third")
+		via := []*http.Request{
+			newRequest(t, "https://example.com/start"),
+			newRequest(t, "http://example.com/second"),
+		}
+
+		require.NoError(t, policy(req, via))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	})
+
+	t.Run("nil origin URL strips conservatively", func(t *testing.T) {
+		t.Parallel()
+
+		policy := hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")
+
+		req := newRequest(t, "https://example.com/next")
+
+		require.NoError(t, policy(req, []*http.Request{{}}))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	})
+
+	t.Run("nil later hop URL strips conservatively", func(t *testing.T) {
+		t.Parallel()
+
+		policy := hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")
+
+		req := newRequest(t, "https://example.com/third")
+		via := []*http.Request{
+			newRequest(t, "https://example.com/start"),
+			{},
+		}
+
+		require.NoError(t, policy(req, via))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	})
+
 	t.Run("https downgrade strips the headers", func(t *testing.T) {
 		t.Parallel()
 
@@ -1642,6 +1924,48 @@ func TestStripSensitiveHeadersOnRedirect(t *testing.T) {
 	})
 }
 
+func TestStripSensitiveHeadersOnRedirect_MultiHop(t *testing.T) {
+	t.Parallel()
+
+	seen := make(chan string, 2)
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.URL.Path + ":" + r.Header.Get("X-Api-Key")
+
+		if r.URL.Path == "/second" {
+			http.Redirect(w, r, "/third", http.StatusFound)
+
+			return
+		}
+
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(target.Close)
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/second", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	client := hqgohttp.New(
+		hqgohttp.WithCheckRedirect(hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")),
+	)
+
+	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, origin.URL, nil)
+
+	require.NoError(t, err)
+
+	req.Header.Set("X-Api-Key", "secret")
+
+	res, err := client.Do(req)
+
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+
+	assert.Equal(t, "/second:", <-seen)
+	assert.Equal(t, "/third:", <-seen)
+}
+
 // newOKServer starts a test server that answers every request with "ok".
 func newOKServer(t *testing.T) (serverURL string) {
 	t.Helper()
@@ -1672,4 +1996,57 @@ func Test_Client_Do_IgnoresNilRequestOptions(t *testing.T) {
 	res, err := client.Do(req, nil)
 	require.NoError(t, err)
 	require.NoError(t, res.Body.Close())
+}
+
+// multipartCloseTrackingReader records whether it has been closed.
+type multipartCloseTrackingReader struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+// Close marks the reader closed.
+func (r *multipartCloseTrackingReader) Close() error {
+	r.closed.Store(true)
+
+	return nil
+}
+
+func TestMultipartForm_ClosesFileReaders(t *testing.T) {
+	t.Parallel()
+
+	t.Run("buffered", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &multipartCloseTrackingReader{Reader: strings.NewReader("file")}
+
+		form := hqgohttp.NewMultipartForm().File("upload", "file.txt", reader)
+
+		res, err := hqgohttp.New().Request().
+			Method(hqgohttpmethod.POST).
+			URL(newOKServer(t)).
+			Multipart(form).
+			Context(t.Context()).Do()
+
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		assert.True(t, reader.closed.Load(), "Expected the file reader to be closed")
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &multipartCloseTrackingReader{Reader: strings.NewReader("file")}
+
+		form := hqgohttp.NewMultipartForm().File("upload", "file.txt", reader)
+
+		body, _, err := form.Stream()
+
+		require.NoError(t, err)
+
+		_, err = io.Copy(io.Discard, body)
+
+		require.NoError(t, err)
+		require.NoError(t, body.Close())
+		assert.True(t, reader.closed.Load(), "Expected the file reader to be closed")
+	})
 }

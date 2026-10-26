@@ -1,6 +1,7 @@
 package header_test
 
 import (
+	"net/textproto"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,5 +67,27 @@ func TestCanonicalizeHeaderKey(t *testing.T) {
 
 			assert.Equal(t, tt.expected, result, "CanonicalizeHeaderKey(%q) = %q; want %q", tt.input, result, tt.expected)
 		})
+	}
+}
+
+func TestCanonicalizeHeaderKey_MatchesTextproto(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"content-type",
+		"ETag",
+		"WWW-Authenticate",
+		"X-UA-Compatible",
+		"TE",
+		"DNT",
+		"Sec-WebSocket-Accept",
+		"x-forwarded-for",
+	} {
+		result := hqgohttpheader.CanonicalizeHeaderKey(key)
+
+		assert.Equal(t, textproto.CanonicalMIMEHeaderKey(key), result,
+			"CanonicalizeHeaderKey(%q) must match net/textproto", key)
+		assert.Equal(t, result, hqgohttpheader.CanonicalizeHeaderKey(result),
+			"CanonicalizeHeaderKey must be idempotent for %q", key)
 	}
 }

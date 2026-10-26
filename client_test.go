@@ -26,16 +26,7 @@ import (
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 	hqgohttpstatus "github.com/hueristiq/hq-lib-http-go/status"
-	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
-
-// noWaitBackoff removes the wait between attempts, keeping retry tests fast.
-// The retry engine clamps the zero delay to its one-millisecond floor.
-func noWaitBackoff(_, _ time.Duration) (backoff hqgoretrierbackoff.Backoff) {
-	return func(int) (delay time.Duration) {
-		return
-	}
-}
 
 // readBody reads and closes a wrapped response body, failing the test on
 // error.
@@ -89,10 +80,6 @@ func TestNew_Options(t *testing.T) {
 
 		client := hqgohttp.New(
 			hqgohttp.WithTimeout(-time.Second),
-			hqgohttp.WithRetryMax(-1),
-			hqgohttp.WithRetryWaitMin(-time.Second),
-			hqgohttp.WithRetryWaitMax(-time.Second),
-			hqgohttp.WithRetryBackoff(nil),
 			hqgohttp.WithRetryPolicy(nil),
 			hqgohttp.WithRateLimiter(nil),
 			hqgohttp.WithOnRequest(nil),
@@ -102,6 +89,30 @@ func TestNew_Options(t *testing.T) {
 
 		require.NotNil(t, client)
 	})
+}
+
+func TestClient_ConfigSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := hqgohttp.New(
+		hqgohttp.WithTimeout(time.Second),
+		hqgohttp.WithHeader("X-Test", "value"),
+	)
+
+	config := client.Config()
+
+	assert.Equal(t, time.Second, config.Timeout)
+	require.Len(t, config.Headers, 2)
+
+	config.Timeout = 0
+	config.Headers[0].Value = "mutated"
+
+	snapshot := client.Config()
+
+	assert.Equal(t, time.Second, snapshot.Timeout,
+		"Expected the snapshot to be independent of later mutations")
+	assert.NotEqual(t, "mutated", snapshot.Headers[0].Value,
+		"Expected the Headers slice to be copied")
 }
 
 func TestClient_Do(t *testing.T) {
@@ -194,7 +205,11 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 
 		client := hqgohttp.New()
 
-		req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), strings.TrimPrefix(serverURL, "http://")+"/direct", nil)
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
+			return neturl.Parse("http://" + raw)
+		})
+
+		req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), strings.TrimPrefix(serverURL, "http://")+"/direct", nil, hqgohttprequest.WithURLParser(parser))
 
 		require.NoError(t, err)
 
@@ -218,7 +233,11 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 
 		client := hqgohttp.New()
 
-		req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), "localhost:"+port+"/direct", nil)
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
+			return neturl.Parse("http://" + raw)
+		})
+
+		req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), "localhost:"+port+"/direct", nil, hqgohttprequest.WithURLParser(parser))
 
 		require.NoError(t, err)
 
@@ -558,8 +577,7 @@ func TestClient_Std(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, http.NoBody)
@@ -589,8 +607,7 @@ func TestClient_Std_POSTDoesNotRetryByDefault(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, strings.NewReader("payload"))
@@ -621,7 +638,7 @@ func TestClient_RoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+	client := hqgohttp.New()
 
 	res, err := client.RoundTrip(req)
 
@@ -674,8 +691,7 @@ func TestClient_PrepareRetry(t *testing.T) {
 	var hookAttempts []int
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithPrepareRetry(func(_ context.Context, req *http.Request, attempt int) error {
 			hookAttempts = append(hookAttempts, attempt)
 
@@ -713,8 +729,7 @@ func TestClient_PrepareRetryAborts(t *testing.T) {
 	signingErr := errors.New("signing failed")
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithPrepareRetry(func(context.Context, *http.Request, int) error {
 			return signingErr
 		}),
@@ -749,8 +764,7 @@ func TestClient_RequestPrepareRetryOverride(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithPrepareRetry(func(context.Context, *http.Request, int) error {
 			return errors.New("client hook must be overridden")
 		}),
@@ -811,7 +825,7 @@ func TestClient_NoExecutionTimeoutByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New(hqgohttp.WithRetryMax(0)).Get(server.URL)
+	res, err := hqgohttp.New().Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -864,10 +878,9 @@ func TestClient_AttemptTimeout(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(1),
+			hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 			hqgohttp.WithAttemptTimeout(50*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
-			hqgohttp.WithRetryBackoff(noWaitBackoff),
 		)
 
 		res, err := client.Get(server.URL)
@@ -895,7 +908,6 @@ func TestClient_AttemptTimeout(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(0),
 			hqgohttp.WithAttemptTimeout(150*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
 		)
@@ -918,7 +930,6 @@ func TestClient_AttemptTimeout(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(0),
 			hqgohttp.WithAttemptTimeout(time.Second),
 			hqgohttp.WithTimeout(100*time.Millisecond),
 		)
@@ -945,7 +956,6 @@ func TestClient_AttemptTimeout(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(0),
 			hqgohttp.WithAttemptTimeout(25*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
 		)
@@ -1006,8 +1016,7 @@ func TestClient_Timeout(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithTimeout(150*time.Millisecond),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithTimeout(150 * time.Millisecond),
 	)
 
 	start := time.Now()
@@ -1166,7 +1175,7 @@ func TestClient_RateLimiter(t *testing.T) {
 
 		client := hqgohttp.New(
 			hqgohttp.WithRateLimiter(limiter),
-			hqgohttp.WithRetryBackoff(noWaitBackoff),
+			hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		)
 
 		res, err := client.Get(server.URL)
@@ -1307,7 +1316,7 @@ func TestClient_ObservabilityCallbacks(t *testing.T) {
 	)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithOnRequest(func(event hqgohttp.RequestEvent) {
 			assert.NotNil(t, event.Request)
 
@@ -1388,8 +1397,7 @@ func TestClient_RetryExhaustionHandlerReturnsFinalResponse(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, err error, attemptCount int) (*http.Response, error) {
 			require.NotNil(t, resp)
 			require.Error(t, err)
@@ -1420,8 +1428,7 @@ func TestClient_RetryExhaustionHandlerReturnsError(t *testing.T) {
 	handledErr := errors.New("handled by the exhaustion handler")
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithOnRetryExhaustion(func(*http.Response, error, int) (*http.Response, error) {
 			return nil, handledErr
 		}),
@@ -1451,7 +1458,6 @@ func TestClient_RetryExhaustionHandlerWithNoRetries(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(0),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, _ error, attemptCount int) (*http.Response, error) {
 			assert.Equal(t, 1, attemptCount)
 
@@ -1479,8 +1485,7 @@ func TestClient_RetryExhaustionHandlerPerRequestOverride(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 	)
 
 	res, err := client.Get(server.URL,
@@ -1542,8 +1547,7 @@ func TestClient_RetryExhaustionHandlerWithNonReplayableBody(t *testing.T) {
 	plain.ContentLength = int64(len("payload"))
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, _ error, _ int) (*http.Response, error) {
 			return resp, nil
 		}),
@@ -1581,7 +1585,7 @@ func TestClient_Query(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+	client := hqgohttp.New()
 
 	res, err := client.Query(server.URL, payload)
 
@@ -1769,8 +1773,7 @@ func TestClient_NonReplayableBodyStopsWithOriginalOutcome(t *testing.T) {
 	req := &hqgohttprequest.Request{Request: plain}
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
 
@@ -1816,8 +1819,7 @@ func TestClient_ReplayabilityGetBodyFailure(t *testing.T) {
 	req := &hqgohttprequest.Request{Request: plain}
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
 
@@ -1878,8 +1880,7 @@ func TestClient_GetBodyIsRewoundBeforeNextAttempt(t *testing.T) {
 
 	client := hqgohttp.New(
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 	)
 
 	res, err := client.Do(&hqgohttprequest.Request{Request: plain})
@@ -1932,9 +1933,7 @@ func TestClient_ReusableBodyAfterPartialRead(t *testing.T) {
 
 	client := hqgohttp.New(
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryWaitMin(time.Millisecond),
-		hqgohttp.WithRetryWaitMax(time.Millisecond),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 	)
 
 	res, err := client.Put("http://example.invalid/", payload)
@@ -2053,8 +2052,7 @@ func TestClient_ReusableBodyAcrossRetries(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 	)
 
 	res, err := client.Put(server.URL, "the payload")
@@ -2080,8 +2078,7 @@ func TestClient_NonIdempotentNotRetriedByDefault(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Post(server.URL, "payload")
@@ -2109,8 +2106,7 @@ func TestClient_NonIdempotentRetriesOptOut(t *testing.T) {
 
 	client := hqgohttp.New(
 		hqgohttp.WithRetryIdempotent(false),
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Post(server.URL, "payload")
@@ -2150,8 +2146,7 @@ func TestClient_RedirectPolicyErrorIsFinal(t *testing.T) {
 	policyErr := errors.New("redirect refused by policy")
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithCheckRedirect(func(*http.Request, []*http.Request) error {
 			return policyErr
 		}),
@@ -2208,8 +2203,8 @@ func TestClient_RetryPolicySeesResponse(t *testing.T) {
 	}
 
 	client := hqgohttp.New(
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithRetryPolicy(policy),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2246,10 +2241,10 @@ func TestClient_OnRetryRequestOverride(t *testing.T) {
 	var clientCalls, requestCalls atomic.Int32
 
 	client := hqgohttp.New(
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithOnRetry(func(_ hqgohttp.RetryEvent) {
 			clientCalls.Add(1)
 		}),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
 	)
 
 	res, err := client.Get(server.URL, hqgohttp.WithRequestOnRetry(func(_ hqgohttp.RetryEvent) {
@@ -2285,17 +2280,16 @@ func TestClient_RequestOptionOverrides(t *testing.T) {
 		return
 	}
 
-	t.Run("max retries override", func(t *testing.T) {
+	t.Run("retrier override", func(t *testing.T) {
 		t.Parallel()
 
 		serverURL, attempts := newUnavailableServer(t)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(5),
-			hqgohttp.WithRetryBackoff(noWaitBackoff),
+			hqgohttp.WithRetrier(testRetrier{maxAttempts: 6}),
 		)
 
-		res, err := client.Get(serverURL, hqgohttp.WithRequestRetryMax(1))
+		res, err := client.Get(serverURL, hqgohttp.WithRequestRetrier(testRetrier{maxAttempts: 2}))
 
 		require.Error(t, err)
 
@@ -2308,17 +2302,16 @@ func TestClient_RequestOptionOverrides(t *testing.T) {
 			"Expected the per-request override to win over the client configuration")
 	})
 
-	t.Run("zero retries disables retrying", func(t *testing.T) {
+	t.Run("nil disables retrying", func(t *testing.T) {
 		t.Parallel()
 
 		serverURL, attempts := newUnavailableServer(t)
 
 		client := hqgohttp.New(
-			hqgohttp.WithRetryMax(5),
-			hqgohttp.WithRetryBackoff(noWaitBackoff),
+			hqgohttp.WithRetrier(testRetrier{maxAttempts: 6}),
 		)
 
-		res, err := client.Get(serverURL, hqgohttp.WithRequestRetryMax(0))
+		res, err := client.Get(serverURL, hqgohttp.WithRequestRetrier(nil))
 
 		require.Error(t, err)
 
@@ -2329,45 +2322,6 @@ func TestClient_RequestOptionOverrides(t *testing.T) {
 		assert.Nil(t, res)
 		assert.Equal(t, int32(1), attempts.Load())
 	})
-}
-
-func TestClient_RetryAfterIsCappedAtWaitMax(t *testing.T) {
-	t.Parallel()
-
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if attempts.Add(1) == 1 {
-			w.Header().Set("Retry-After", "10")
-			w.WriteHeader(hqgohttpstatus.ServiceUnavailable.Int())
-
-			return
-		}
-
-		_, _ = w.Write([]byte("capped"))
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryWaitMax(50*time.Millisecond),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
-	)
-
-	start := time.Now()
-
-	res, err := client.Get(server.URL)
-
-	elapsed := time.Since(start)
-
-	require.NoError(t, err)
-	require.NotNil(t, res)
-
-	assert.Equal(t, "capped", readBody(t, res))
-	assert.Equal(t, int32(2), attempts.Load())
-	assert.Less(t, elapsed, 5*time.Second,
-		"Expected the honored Retry-After wait to be capped at the maximum retry wait")
 }
 
 func TestClient_OnRetry(t *testing.T) {
@@ -2390,10 +2344,10 @@ func TestClient_OnRetry(t *testing.T) {
 	var events []hqgohttp.RetryEvent
 
 	client := hqgohttp.New(
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 		hqgohttp.WithOnRetry(func(event hqgohttp.RetryEvent) {
 			events = append(events, event)
 		}),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2458,8 +2412,7 @@ func TestClient_RetryIdempotentRequestOverride(t *testing.T) {
 
 	client := hqgohttp.New(
 		hqgohttp.WithRetryIdempotent(true),
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Request().
@@ -2500,8 +2453,7 @@ func TestClient_RetriesServerErrors(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(3),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 4}),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2544,8 +2496,7 @@ func TestClient_RetryIdempotent(t *testing.T) {
 
 			client := hqgohttp.New(
 				hqgohttp.WithRetryIdempotent(true),
-				hqgohttp.WithRetryMax(2),
-				hqgohttp.WithRetryBackoff(noWaitBackoff),
+				hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 			)
 
 			res, err := client.Request().Method(tc.method).URL(server.URL).Context(t.Context()).Do()
@@ -2586,8 +2537,7 @@ func TestClient_ExhaustedRetries(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2603,85 +2553,6 @@ func TestClient_ExhaustedRetries(t *testing.T) {
 	assert.Contains(t, err.Error(), "503")
 	assert.Equal(t, int32(3), attempts.Load(),
 		"Expected the initial attempt plus two retries")
-}
-
-func TestClient_Retries429HonoringRetryAfter(t *testing.T) {
-	t.Parallel()
-
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if attempts.Add(1) == 1 {
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(hqgohttpstatus.TooManyRequests.Int())
-
-			return
-		}
-
-		_, _ = w.Write([]byte("after the wait"))
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryWaitMax(30*time.Second),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
-	)
-
-	start := time.Now()
-
-	res, err := client.Get(server.URL)
-
-	elapsed := time.Since(start)
-
-	require.NoError(t, err)
-	require.NotNil(t, res)
-
-	assert.Equal(t, "after the wait", readBody(t, res))
-	assert.Equal(t, int32(2), attempts.Load())
-	assert.GreaterOrEqual(t, elapsed, time.Second,
-		"Expected the retry to honor the one-second Retry-After header")
-}
-
-func TestClient_ZeroRetryAfterRetriesImmediately(t *testing.T) {
-	t.Parallel()
-
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if attempts.Add(1) == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(hqgohttpstatus.TooManyRequests.Int())
-
-			return
-		}
-
-		_, _ = w.Write([]byte("ok"))
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryWaitMin(time.Second),
-		hqgohttp.WithRetryWaitMax(30*time.Second),
-		hqgohttp.WithRetryBackoff(func(_, _ time.Duration) hqgoretrierbackoff.Backoff {
-			return func(int) time.Duration { return time.Second }
-		}),
-	)
-
-	start := time.Now()
-
-	res, err := client.Get(server.URL)
-
-	elapsed := time.Since(start)
-
-	require.NoError(t, err)
-	assert.Equal(t, "ok", readBody(t, res))
-	assert.Equal(t, int32(2), attempts.Load())
-	assert.Less(t, elapsed, time.Second,
-		"Expected Retry-After: 0 to skip the one-second backoff")
 }
 
 func TestClient_MalformedURLs(t *testing.T) {
@@ -2722,7 +2593,11 @@ func TestClient_MalformedURLs(t *testing.T) {
 
 		server, captures := newServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
+			return neturl.Parse(strings.ReplaceAll(raw, "%invalid", "%25invalid"))
+		})
+
+		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
 
 		res, err := client.Get(server.URL + "/%invalid")
 
@@ -2742,7 +2617,7 @@ func TestClient_MalformedURLs(t *testing.T) {
 
 		server, captures := newServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Get(server.URL + "/w%0d%2e/")
 
@@ -2764,7 +2639,7 @@ func TestClient_MalformedURLs(t *testing.T) {
 
 		const rawQuery = "some'param=`'+OR+ORDER+BY+1--"
 
-		client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+		client := hqgohttp.New()
 
 		res, err := client.Get(server.URL + "/with/path?" + rawQuery)
 
@@ -2785,9 +2660,6 @@ func TestDefaultOptionConstants(t *testing.T) {
 	assert.Zero(t, hqgohttp.DefaultTimeout)
 	assert.Equal(t, 30*time.Second, hqgohttp.RecommendedTimeout)
 	assert.Zero(t, hqgohttp.DefaultResponseBodyTimeout)
-	assert.Equal(t, 2, hqgohttp.DefaultRetryMax)
-	assert.Equal(t, time.Second, hqgohttp.DefaultRetryWaitMin)
-	assert.Equal(t, 30*time.Second, hqgohttp.DefaultRetryWaitMax)
 	assert.Equal(t, 4096, hqgohttp.DefaultResponseReadLimit)
 	assert.NotEmpty(t, hqgohttp.DefaultUserAgent)
 }
@@ -2837,7 +2709,6 @@ func TestClient_ProtocolHTTP1(t *testing.T) {
 	client := hqgohttp.New(
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP1),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
-		hqgohttp.WithRetryMax(0),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2859,7 +2730,6 @@ func TestClient_ProtocolHTTP2(t *testing.T) {
 	client := hqgohttp.New(
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
-		hqgohttp.WithRetryMax(0),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2881,7 +2751,6 @@ func TestClient_ProtocolHTTP2_h2c(t *testing.T) {
 
 	client := hqgohttp.New(
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
-		hqgohttp.WithRetryMax(0),
 	)
 
 	res, err := client.Get(server.URL)
@@ -2900,7 +2769,6 @@ func TestClient_ProtocolHTTP3(t *testing.T) {
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP3),
 		withoutProxy(),
 		hqgohttp.WithTLSConfig(tlsConfig),
-		hqgohttp.WithRetryMax(0),
 	)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -2922,7 +2790,6 @@ func TestClient_ProtocolAutoHTTP3(t *testing.T) {
 		hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
 		withoutProxy(),
 		hqgohttp.WithTLSConfig(tlsConfig),
-		hqgohttp.WithRetryMax(0),
 	)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -2984,4 +2851,73 @@ func Test_Client_New_IgnoresNilOptions(t *testing.T) {
 	require.NotNil(t, client)
 
 	client.Close()
+}
+
+func TestClient_URLParser(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("parsed"))
+	}))
+
+	t.Cleanup(server.Close)
+
+	var gotRaw string
+
+	parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
+		gotRaw = raw
+
+		return neturl.Parse(server.URL)
+	})
+
+	client := hqgohttp.New(hqgohttp.WithURLParser(parser))
+
+	res, err := client.Get("custom://ignored")
+
+	require.NoError(t, err)
+	assert.Equal(t, "parsed", readBody(t, res))
+	assert.Equal(t, "custom://ignored", gotRaw, "Expected the custom parser to receive the raw URL")
+}
+
+func TestClient_RequestURLParserOverride(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	t.Cleanup(server.Close)
+
+	serverURL, err := neturl.Parse(server.URL)
+	require.NoError(t, err)
+
+	var clientCalls, requestCalls atomic.Int32
+
+	clientParser := hqgohttprequest.URLParserFunc(func(string) (*neturl.URL, error) {
+		clientCalls.Add(1)
+
+		return serverURL, nil
+	})
+
+	requestParser := hqgohttprequest.URLParserFunc(func(string) (*neturl.URL, error) {
+		requestCalls.Add(1)
+
+		return serverURL, nil
+	})
+
+	client := hqgohttp.New(hqgohttp.WithURLParser(clientParser))
+
+	res, err := client.Get("ignored", hqgohttp.WithRequestURLParser(requestParser))
+
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	assert.Zero(t, clientCalls.Load(), "Expected the per-request parser to replace the client parser")
+	assert.Equal(t, int32(1), requestCalls.Load())
+
+	res, err = client.Get("ignored", hqgohttp.WithRequestURLParser(nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	assert.Equal(t, int32(1), clientCalls.Load(), "Expected a nil override to keep the client parser")
+	assert.Equal(t, int32(1), requestCalls.Load())
 }

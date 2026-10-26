@@ -45,6 +45,9 @@ func TestStatus_String(t *testing.T) {
 		{"ServiceUnavailable", hqgohttpstatus.ServiceUnavailable, http.StatusText(http.StatusServiceUnavailable)},
 		{"NetworkAuthenticationRequired", hqgohttpstatus.NetworkAuthenticationRequired, http.StatusText(http.StatusNetworkAuthenticationRequired)},
 		{"Unknown", hqgohttpstatus.Status(599), "Unknown Status (599)"},
+		{"Zero", hqgohttpstatus.Status(0), "Unknown Status (0)"},
+		{"Unused 306", hqgohttpstatus.Status(306), "Unknown Status (306)"},
+		{"Out of range", hqgohttpstatus.Status(600), "Unknown Status (600)"},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +83,8 @@ func TestStatus_Classification(t *testing.T) {
 		{"499 boundary", hqgohttpstatus.Status(499), false, false, false, true, false, true},
 		{"500 Internal Server Error", hqgohttpstatus.InternalServerError, false, false, false, false, true, true},
 		{"599 boundary", hqgohttpstatus.Status(599), false, false, false, false, true, true},
+		{"0 boundary", hqgohttpstatus.Status(0), false, false, false, false, false, false},
+		{"600 boundary", hqgohttpstatus.Status(600), false, false, false, false, false, false},
 	}
 
 	for _, tt := range tests {

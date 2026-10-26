@@ -35,7 +35,6 @@ func TestClient_WithDialContext(t *testing.T) {
 
 			return dialer.DialContext(ctx, network, address)
 		}),
-		WithRetryMax(0),
 	)
 
 	res, err := client.Get(server.URL)
@@ -56,14 +55,14 @@ func TestClient_WithDialer(t *testing.T) {
 
 	client := New(WithDialer(&net.Dialer{Timeout: time.Second}))
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.NotNil(t, transport.DialContext)
 
 	client = New(WithDialer(nil))
 
-	transport, ok = client.HTTPClient.Transport.(*http.Transport)
+	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.NotNil(t, transport.DialContext, "Expected the default dialer to remain")
@@ -74,7 +73,7 @@ func TestClient_WithTLSHandshakeTimeout(t *testing.T) {
 
 	client := New(WithTLSHandshakeTimeout(2 * time.Second))
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Equal(t, 2*time.Second, transport.TLSHandshakeTimeout)
@@ -87,14 +86,14 @@ func TestClient_WithTLSHandshakeTimeout(t *testing.T) {
 
 	client = New(WithTLSHandshakeTimeout(0))
 
-	transport, ok = client.HTTPClient.Transport.(*http.Transport)
+	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Zero(t, transport.TLSHandshakeTimeout)
 
 	client = New()
 
-	transport, ok = client.HTTPClient.Transport.(*http.Transport)
+	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Equal(t, 10*time.Second, transport.TLSHandshakeTimeout,
@@ -117,7 +116,7 @@ func TestClient_WithTransportBuilder(t *testing.T) {
 
 	assert.Equal(t, ProtocolAuto, gotProtocol)
 
-	primary, ok := client.HTTPClient.Transport.(*http.Transport)
+	primary, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Equal(t, 7, primary.MaxIdleConnsPerHost)
@@ -140,7 +139,7 @@ func TestClient_WithTransportBuilderNilResultKeepsTransport(t *testing.T) {
 		return nil
 	}))
 
-	configured, ok := client.HTTPClient.Transport.(*http.Transport)
+	configured, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Same(t, original, configured)
@@ -165,7 +164,7 @@ func TestClient_WithTransportBuilderIgnoredWithTransport(t *testing.T) {
 	)
 
 	require.False(t, called.Load())
-	assert.NotNil(t, client.HTTPClient.Transport)
+	assert.NotNil(t, client.config.HTTPClient.Transport)
 }
 
 func TestClient_WithTransportBuilderSkipsHTTP3(t *testing.T) {
@@ -199,8 +198,8 @@ func TestClient_WithCookieJarClonesCustomClient(t *testing.T) {
 		WithCookieJar(jar),
 	)
 
-	assert.NotSame(t, custom, client.HTTPClient)
-	assert.Same(t, jar, client.HTTPClient.Jar)
+	assert.NotSame(t, custom, client.config.HTTPClient)
+	assert.Same(t, jar, client.config.HTTPClient.Jar)
 	require.NotNil(t, client.fallbackHTTPClient)
 	assert.Same(t, jar, client.fallbackHTTPClient.Jar)
 }
@@ -217,9 +216,9 @@ func TestClient_WithCheckRedirectClonesCustomClient(t *testing.T) {
 		}),
 	)
 
-	assert.NotSame(t, custom, client.HTTPClient)
-	require.NotNil(t, client.HTTPClient.CheckRedirect)
-	require.ErrorIs(t, client.HTTPClient.CheckRedirect(&http.Request{}, nil), http.ErrUseLastResponse)
+	assert.NotSame(t, custom, client.config.HTTPClient)
+	require.NotNil(t, client.config.HTTPClient.CheckRedirect)
+	require.ErrorIs(t, client.config.HTTPClient.CheckRedirect(&http.Request{}, nil), http.ErrUseLastResponse)
 	require.NotNil(t, client.fallbackHTTPClient)
 	require.NotNil(t, client.fallbackHTTPClient.CheckRedirect)
 	require.ErrorIs(t, client.fallbackHTTPClient.CheckRedirect(&http.Request{}, nil), http.ErrUseLastResponse)
@@ -247,7 +246,7 @@ func TestClient_TransportPrecedence(t *testing.T) {
 		}),
 	)
 
-	assert.Same(t, custom, client.HTTPClient.Transport)
+	assert.Same(t, custom, client.config.HTTPClient.Transport)
 	assert.False(t, proxyCalled.Load(), "Expected WithTransport to bypass WithProxy")
 	assert.False(t, wrapperCalled.Load(), "Expected WithTransport to bypass WithTransportWrapper")
 }
@@ -257,7 +256,7 @@ func TestClient_WithProxyDisabled(t *testing.T) {
 
 	client := New(withoutProxy())
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 
@@ -280,7 +279,7 @@ func TestClient_WithProxy(t *testing.T) {
 		return proxyURL, nil
 	}))
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 
@@ -298,7 +297,7 @@ func TestClient_WithProxySelector(t *testing.T) {
 
 	client := New(fixedProxy(proxyURL))
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 
@@ -315,5 +314,5 @@ func TestClient_WithTransportWrapperNilFallsBack(t *testing.T) {
 		return nil
 	}))
 
-	require.NotNil(t, client.HTTPClient.Transport)
+	require.NotNil(t, client.config.HTTPClient.Transport)
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,8 +21,6 @@ import (
 	hqgohttpheader "github.com/hueristiq/hq-lib-http-go/header"
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
-	hqgoretrier "github.com/hueristiq/hq-lib-retrier-go"
-	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
 
 // Client is the primary structure used to perform HTTP requests.
@@ -43,7 +42,8 @@ import (
 // value is not usable.
 //
 // Fields:
-//   - ClientOptions: the embedded configuration — see its Fields list.
+//   - config (ClientOptions): the resolved configuration. It is private and
+//     immutable after [New]; use [Client.Config] to inspect it.
 //   - fallbackHTTPClient (*http.Client): the fallback client, nil when the
 //     selected protocol has no fallback.
 //   - fallbackOnHTTP3 (bool): whether fallback errors are HTTP/3 transport
@@ -52,7 +52,9 @@ import (
 //     false when a custom client or transport supplies the protocol.
 //   - http3Failures (sync.Map): hosts that recently failed an HTTP/3 attempt,
 //     mapped to the failure time. Used by [ProtocolAutoHTTP3] to skip HTTP/3
-//     for the configured TTL.
+//     for the configured TTL. Expired entries are pruned periodically.
+//   - http3FailureWrites (atomic.Uint64): the number of failure-cache writes,
+//     used to trigger the periodic prune.
 //   - requestCount (atomic.Uint64): the number of completed executions; idle
 //     connections are closed whenever the count reaches a multiple of the
 //     configured threshold.
@@ -62,12 +64,13 @@ import (
 //   - closeCancel (context.CancelCauseFunc): cancels closeCtx with
 //     [ErrClientClosed].
 type Client struct {
-	ClientOptions
+	config ClientOptions
 
 	fallbackHTTPClient *http.Client
 	fallbackOnHTTP3    bool
 	http3Primary       bool
 	http3Failures      sync.Map
+	http3FailureWrites atomic.Uint64
 	requestCount       atomic.Uint64
 	closed             atomic.Bool
 	closeCtx           context.Context //nolint:containedctx // The close context is the client lifecycle signal.
@@ -231,7 +234,9 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 }
 
 // ClientOptions holds the configurable knobs of a [Client], populated through
-// [ClientOptionFunc] values passed to [New].
+// [ClientOptionFunc] values passed to [New]. The resolved configuration is
+// private to the client and immutable after construction; use [Client.Config]
+// to inspect a snapshot.
 //
 // Fields:
 //   - HTTPClient (*http.Client): the underlying client executing requests. Nil
@@ -277,14 +282,12 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 //     Non-positive means unlimited.
 //   - AttemptTimeout (time.Duration): the bound on one attempt through receipt
 //     of the response headers. Non-positive disables it.
-//   - MaxRetries (int): the number of retries after the initial attempt. Zero
-//     disables retries; negative falls back to [DefaultRetryMax].
-//   - RetryWaitMin (time.Duration): the minimum delay between attempts.
-//   - RetryWaitMax (time.Duration): the maximum delay between attempts, also
-//     capping an honored Retry-After wait.
-//   - NewRetryBackoff (func(minDelay, maxDelay time.Duration) (backoff Backoff)):
-//     the constructor for the strategy computing the delay per attempt. Nil
-//     selects exponential backoff with decorrelated jitter.
+//   - URLParser (hqgohttprequest.URLParser): the parser turning a raw URL into
+//     an absolute URL when [RequestBuilder] builds a request. Nil selects
+//     [net/url.Parse].
+//   - Retrier (Retrier): the engine running the attempts of every execution.
+//     Nil means a single attempt; the engine owns the attempt count, waits, and
+//     backoff.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
 //     retry. Nil selects [DefaultRetryPolicy].
 //   - RateLimiter (RateLimiter): the limiter waited on before every retry-engine
@@ -342,10 +345,8 @@ type ClientOptions struct {
 	MaxResponseBodySize        int64
 	MaxRequestBodySize         int64
 	AttemptTimeout             time.Duration
-	MaxRetries                 int
-	RetryWaitMin               time.Duration
-	RetryWaitMax               time.Duration
-	NewRetryBackoff            func(minDelay, maxDelay time.Duration) (backoff Backoff)
+	URLParser                  hqgohttprequest.URLParser
+	Retrier                    Retrier
 	RetryPolicy                RetryPolicy
 	RateLimiter                RateLimiter
 	OnRequest                  OnRequestFunc
@@ -386,16 +387,6 @@ func (opts *ClientOptions) normalize() {
 		opts.AttemptTimeout = 0
 	}
 
-	if opts.MaxRetries < 0 {
-		opts.MaxRetries = DefaultRetryMax
-	}
-
-	normalizeRetryBounds(&opts.RetryWaitMin, &opts.RetryWaitMax)
-
-	if opts.NewRetryBackoff == nil {
-		opts.NewRetryBackoff = hqgoretrierbackoff.ExponentialWithDecorrelatedJitter
-	}
-
 	if opts.RetryPolicy == nil {
 		opts.RetryPolicy = DefaultRetryPolicy
 	}
@@ -423,17 +414,16 @@ type ClientOptionFunc func(opts *ClientOptions)
 // [DefaultUserAgent] as the default User-Agent header
 // (replaceable with [WithHeader]), no execution timeout
 // ([DefaultResponseBodyTimeout] adds no separate body-read bound), no
-// per-attempt timeout, [DefaultRetryMax] retries with waits between
-// [DefaultRetryWaitMin] and [DefaultRetryWaitMax] under exponential backoff
-// with decorrelated jitter, [DefaultRetryPolicy], idempotent-only retries, no
-// rate limiter, no callbacks, no retry hook, no periodic idle-connection
-// close, [DefaultResponseReadLimit] as the drain bound, retry-error body
-// capture disabled ([DefaultRetryErrorBodyLimit] is zero), no response or
-// request body cap, and [DefaultHTTP3FallbackTTL] for the HTTP/3 failure
-// cache. A library-built client uses HTTP/1.x and HTTP/2 with environment
-// proxying and no cookie jar; [WithTransport], [WithProxy],
-// [WithCheckRedirect], and [WithCookieJar] change that. Invalid values are
-// normalized the same way — see each option's documentation.
+// per-attempt timeout, no retrier (a single attempt per execution),
+// [DefaultRetryPolicy], idempotent-only retries, no rate limiter, no
+// callbacks, no retry hook, no periodic idle-connection close,
+// [DefaultResponseReadLimit] as the drain bound, retry-error body capture
+// disabled ([DefaultRetryErrorBodyLimit] is zero), no response or request body
+// cap, and [DefaultHTTP3FallbackTTL] for the HTTP/3 failure cache. A
+// library-built client uses HTTP/1.x and HTTP/2 with environment proxying and
+// no cookie jar; [WithTransport], [WithProxy], [WithCheckRedirect], and
+// [WithCookieJar] change that. Invalid values are normalized the same way —
+// see each option's documentation.
 //
 // Parameters:
 //   - ofs (...ClientOptionFunc): functional options configuring the client.
@@ -445,10 +435,6 @@ func New(ofs ...ClientOptionFunc) (client *Client) {
 		Headers:             []HeaderField{{Key: hqgohttpheader.UserAgent.String(), Value: DefaultUserAgent}},
 		Timeout:             DefaultTimeout,
 		ResponseBodyTimeout: DefaultResponseBodyTimeout,
-		MaxRetries:          DefaultRetryMax,
-		RetryWaitMin:        DefaultRetryWaitMin,
-		RetryWaitMax:        DefaultRetryWaitMax,
-		NewRetryBackoff:     hqgoretrierbackoff.ExponentialWithDecorrelatedJitter,
 		RetryPolicy:         DefaultRetryPolicy,
 		IdempotentRetries:   true,
 		ResponseReadLimit:   DefaultResponseReadLimit,
@@ -467,14 +453,28 @@ func New(ofs ...ClientOptionFunc) (client *Client) {
 	closeCtx, closeCancel := context.WithCancelCause(context.Background())
 
 	client = &Client{
-		ClientOptions: *opts,
-		closeCtx:      closeCtx,
-		closeCancel:   closeCancel,
+		config:      *opts,
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}
 
 	client.buildHTTPClients()
 
 	return client
+}
+
+// Config returns a snapshot of the configuration resolved by [New].
+//
+// Mutating the snapshot does not affect the client. The Headers slice is
+// copied; pointer, interface, and context fields are shared.
+//
+// Returns:
+//   - options (ClientOptions): the resolved configuration.
+func (c *Client) Config() (options ClientOptions) {
+	options = c.config
+	options.Headers = slices.Clone(c.config.Headers)
+
+	return options
 }
 
 // WithHTTPClient returns a [ClientOptionFunc] that sets the underlying client
@@ -569,10 +569,11 @@ func WithTimeout(timeout time.Duration) (f ClientOptionFunc) {
 }
 
 // WithContext returns a [ClientOptionFunc] that sets the default execution
-// context. It applies when a request carries no explicit context, meaning its
-// context is [context.Background]. A context set on the request through
-// [github.com/hueristiq/hq-lib-http-go/request.New] or
-// [RequestBuilder.Context] overrides it.
+// context. It applies when a request carries no explicit context. A context set
+// on the request through [github.com/hueristiq/hq-lib-http-go/request.New] or
+// [RequestBuilder.Context] overrides it, including an explicit
+// [context.Background]. Passing nil to request.New leaves the client default in
+// charge.
 //
 // A default with a deadline applies to every later execution, so prefer a
 // per-request context for per-request deadlines. Passing nil leaves no
@@ -638,12 +639,13 @@ func WithMaxResponseBodySize(maxResponseBodySize int64) (f ClientOptionFunc) {
 
 // WithMaxRequestBodySize returns a [ClientOptionFunc] that caps the number of
 // bytes buffered into a request body. Request bodies are buffered in memory so
-// they can be replayed on retries; this option rejects an oversized buffered
-// body instead of retaining it.
+// they can be replayed on retries; this option rejects an oversized body
+// instead of retaining it.
 //
-// The cap applies to bodies built by [RequestBuilder] and
-// [github.com/hueristiq/hq-lib-http-go/request.NewLimited]. A pre-built
-// request with a known ContentLength is also rejected by [Client.Do] and
+// Raw readers passed to [RequestBuilder.Body] are read through the cap. JSON and
+// XML are encoded through a limit-aware writer; Form is checked after
+// [net/url.Values.Encode]; multipart stops writing at the cap. A pre-built
+// request with a known ContentLength is rejected by [Client.Do] and
 // [Client.RoundTrip]. Streaming bodies with an unknown length are not capped;
 // use [RequestBuilder.BodyStream] to avoid buffering entirely.
 //
@@ -687,82 +689,6 @@ func WithAttemptTimeout(timeout time.Duration) (f ClientOptionFunc) {
 		} else {
 			opts.AttemptTimeout = 0
 		}
-	}
-}
-
-// WithRetryMax returns a [ClientOptionFunc] that sets the number of retries
-// after the initial attempt, so a value of 2 means up to 3 attempts per
-// request.
-//
-// Zero disables additional attempts, but it does not disable retry
-// classification: a persistent 429 or 5xx outcome still exhausts into a
-// [*RetryError] unless a policy or [WithOnRetryExhaustion] returns the final
-// response.
-//
-// Parameters:
-//   - retryMax (int): the number of retries. Zero disables additional
-//     attempts; values below 0 fall back to [DefaultRetryMax].
-//
-// Returns:
-//   - f (ClientOptionFunc): a functional option that sets the maxRetries field.
-func WithRetryMax(retryMax int) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
-		opts.MaxRetries = retryMax
-	}
-}
-
-// WithRetryWaitMin returns a [ClientOptionFunc] that sets the minimum delay
-// between retry attempts, serving as the base delay for backoff calculations.
-//
-// Parameters:
-//   - retryWaitMin (time.Duration): the minimum delay. Values less than or
-//     equal to 0 fall back to [DefaultRetryWaitMin].
-//
-// Returns:
-//   - f (ClientOptionFunc): a functional option that sets the retryWaitMin field.
-func WithRetryWaitMin(retryWaitMin time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
-		opts.RetryWaitMin = retryWaitMin
-	}
-}
-
-// WithRetryWaitMax returns a [ClientOptionFunc] that sets the maximum delay
-// between retry attempts, capping the backoff duration. The wait honored from
-// a Retry-After response header is capped at this value as well.
-//
-// Parameters:
-//   - retryWaitMax (time.Duration): the maximum delay. Values less than or
-//     equal to 0 fall back to [DefaultRetryWaitMax], and a value below the
-//     minimum wait is raised to it.
-//
-// Returns:
-//   - f (ClientOptionFunc): a functional option that sets the retryWaitMax field.
-func WithRetryWaitMax(retryWaitMax time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
-		opts.RetryWaitMax = retryWaitMax
-	}
-}
-
-// WithRetryBackoff returns a [ClientOptionFunc] that selects the backoff
-// strategy computing the delay for each retry attempt.
-//
-// It takes a constructor rather than a ready-made strategy: the retry engine
-// calls it once per request execution with the normalized wait bounds, so
-// stateful strategies such as the decorrelated jitter always run with fresh,
-// per-execution state. The constructors in the backoff package of
-// github.com/hueristiq/hq-lib-retrier-go match this signature and can be
-// passed directly, e.g. WithRetryBackoff(backoff.ExponentialWithFullJitter).
-//
-// Parameters:
-//   - newRetryBackoff (func(minDelay, maxDelay time.Duration) (backoff Backoff)):
-//     the backoff strategy constructor. Nil selects the default strategy
-//     (exponential backoff with decorrelated jitter).
-//
-// Returns:
-//   - f (ClientOptionFunc): a functional option that sets the newRetryBackoff field.
-func WithRetryBackoff(newRetryBackoff func(minDelay, maxDelay time.Duration) (backoff Backoff)) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
-		opts.NewRetryBackoff = newRetryBackoff
 	}
 }
 
@@ -827,6 +753,54 @@ func WithRetryIdempotent(enabled bool) (f ClientOptionFunc) {
 func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
 	return func(opts *ClientOptions) {
 		opts.RateLimiter = rateLimiter
+	}
+}
+
+// WithRetrier returns a [ClientOptionFunc] that registers the retry engine
+// running the attempts of every request execution. The engine owns the attempt
+// count, waits, and backoff; the client supplies the operation, its
+// HTTP-specific hooks, and the parsed Retry-After wait through
+// [RetrierOptions].
+//
+// The retrier is any value with a Retry method — for example an adapter around
+// github.com/hueristiq/hq-lib-retrier-go built with [RetrierFunc] — so no
+// module dependency is imposed. With no retrier, every execution makes a
+// single attempt; a persistent 429 or 5xx outcome still becomes a
+// [*RetryError] unless a policy or [WithOnRetryExhaustion] returns the final
+// response. A retrier shared across clients must be safe for concurrent use.
+//
+// Parameters:
+//   - retrier (Retrier): the retry engine. Nil disables retries.
+//
+// Returns:
+//   - f (ClientOptionFunc): a functional option that sets the retrier field.
+func WithRetrier(retrier Retrier) (f ClientOptionFunc) {
+	return func(opts *ClientOptions) {
+		opts.Retrier = retrier
+	}
+}
+
+// WithURLParser returns a [ClientOptionFunc] that sets the parser
+// [RequestBuilder] uses to turn a raw URL string into an absolute URL.
+//
+// The default is [net/url.Parse], which is strict: it applies no default
+// scheme and repairs no invalid percent escapes. A parser adds either behavior
+// — for example an adapter around github.com/hueristiq/hq-lib-url-go's parser
+// built with [github.com/hueristiq/hq-lib-http-go/request.URLParserFunc] — so
+// no module dependency is imposed. [WithRequestURLParser] overrides it for one
+// request. A parser shared across clients must be safe for concurrent use.
+//
+// Parameters:
+//   - parser (hqgohttprequest.URLParser): the URL parser. Nil keeps the
+//     default.
+//
+// Returns:
+//   - f (ClientOptionFunc): a functional option that sets the urlParser field.
+func WithURLParser(parser hqgohttprequest.URLParser) (f ClientOptionFunc) {
+	return func(opts *ClientOptions) {
+		if parser != nil {
+			opts.URLParser = parser
+		}
 	}
 }
 
@@ -994,7 +968,8 @@ func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
 // snapshot preserves the server's error payload. Body capture is disabled by
 // default; a positive value enables it and bounds the memory retained by the
 // error. Response payloads can contain credentials or personal data, so redact
-// [RetryError.Body] and [RetryError.Header] before logging.
+// [RetryError.Body], [RetryError.Header], and secret query parameters in
+// [RetryError.URL] before logging.
 //
 // Parameters:
 //   - retryErrorBodyLimit (int64): the snapshot bound in bytes. A value of 0
@@ -1009,73 +984,45 @@ func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
 	}
 }
 
-// WithRequestRetryMax returns a [RequestOptionFunc] that overrides the
-// number of retries after the initial attempt for a single request.
+// WithRequestRetrier returns a [RequestOptionFunc] that overrides the retry
+// engine for a single request. The engine owns the attempt count, waits, and
+// backoff, so the override is the way to change them per request.
+//
+// Unlike [WithRequestRateLimiter], nil is not ignored: it disables retries for
+// that execution, so a request can opt out of a client-wide engine. Omit the
+// option to keep the client configuration.
 //
 // Parameters:
-//   - retryMax (int): the number of retries. Zero disables retries for the
-//     request; values below 0 are ignored, keeping the client configuration.
+//   - retrier (Retrier): the retry engine. Nil disables retries for the
+//     request.
 //
 // Returns:
-//   - f (RequestOptionFunc): a functional option that sets the maxRetries field.
-func WithRequestRetryMax(retryMax int) (f RequestOptionFunc) {
+//   - f (RequestOptionFunc): a functional option that sets the retrier field.
+func WithRequestRetrier(retrier Retrier) (f RequestOptionFunc) {
 	return func(opts *RequestOptions) {
-		if retryMax >= 0 {
-			opts.MaxRetries = retryMax
-		}
+		opts.Retrier = retrier
 	}
 }
 
-// WithRequestRetryWaitMin returns a [RequestOptionFunc] that overrides the
-// minimum delay between retry attempts for a single request.
+// WithRequestURLParser returns a [RequestOptionFunc] that overrides the URL
+// parser for a single request built by [RequestBuilder]. A pre-built
+// [github.com/hueristiq/hq-lib-http-go/request.Request] already carries its
+// parsed URL, so the option has no effect on it.
+//
+// The default is [net/url.Parse]; a parser can add a default scheme, repair
+// invalid percent escapes, or apply any other transformation. Nil is ignored,
+// keeping the client configuration.
 //
 // Parameters:
-//   - retryWaitMin (time.Duration): the minimum delay. Values less than or
-//     equal to 0 are ignored, keeping the client configuration.
+//   - parser (hqgohttprequest.URLParser): the URL parser. Nil keeps the client
+//     configuration.
 //
 // Returns:
-//   - f (RequestOptionFunc): a functional option that sets the retryWaitMin field.
-func WithRequestRetryWaitMin(retryWaitMin time.Duration) (f RequestOptionFunc) {
+//   - f (RequestOptionFunc): a functional option that sets the urlParser field.
+func WithRequestURLParser(parser hqgohttprequest.URLParser) (f RequestOptionFunc) {
 	return func(opts *RequestOptions) {
-		if retryWaitMin > 0 {
-			opts.RetryWaitMin = retryWaitMin
-		}
-	}
-}
-
-// WithRequestRetryWaitMax returns a [RequestOptionFunc] that overrides the
-// maximum delay between retry attempts for a single request. The wait honored
-// from a Retry-After response header is capped at this value as well.
-//
-// Parameters:
-//   - retryWaitMax (time.Duration): the maximum delay. Values less than or
-//     equal to 0 are ignored, keeping the client configuration.
-//
-// Returns:
-//   - f (RequestOptionFunc): a functional option that sets the retryWaitMax field.
-func WithRequestRetryWaitMax(retryWaitMax time.Duration) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
-		if retryWaitMax > 0 {
-			opts.RetryWaitMax = retryWaitMax
-		}
-	}
-}
-
-// WithRequestRetryBackoff returns a [RequestOptionFunc] that overrides the
-// backoff strategy computing the delay for each retry attempt of a single
-// request.
-//
-// Parameters:
-//   - newRetryBackoff (func(minDelay, maxDelay time.Duration) (backoff Backoff)):
-//     the backoff strategy constructor, called once per execution with the
-//     normalized wait bounds. Nil is ignored, keeping the client configuration.
-//
-// Returns:
-//   - f (RequestOptionFunc): a functional option that sets the newRetryBackoff field.
-func WithRequestRetryBackoff(newRetryBackoff func(minDelay, maxDelay time.Duration) (backoff Backoff)) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
-		if newRetryBackoff != nil {
-			opts.NewRetryBackoff = newRetryBackoff
+		if parser != nil {
+			opts.URLParser = parser
 		}
 	}
 }
@@ -1370,7 +1317,8 @@ type OnRequestFunc func(event RequestEvent)
 //   - Attempt (int): the 1-based attempt number.
 //   - Request (*http.Request): the attempt request.
 //   - Response (*http.Response): the response received on the attempt, or nil.
-//   - Err (error): the attempt's transport or status error, or nil.
+//   - Err (error): the attempt's transport error, or nil. The retry policy
+//     classifies a response's status after this callback returns.
 //   - Duration (time.Duration): the elapsed time of the attempt, including an
 //     internal protocol fallback resend.
 type ResponseEvent struct {
@@ -1499,8 +1447,10 @@ type RetryExhaustionHandler func(resp *http.Response, err error, attempts int) (
 // and consults the retry policy. Retries are idempotent-only by default, so a
 // POST or PATCH stops after its first response unless
 // WithRetryIdempotent(false) or WithRequestRetryIdempotent(false) opts
-// out. When the policy approves a retry, the OnRetry callback runs before the
-// wait. A request body built through the request package or
+// out. Attempts run only through the [Retrier] configured with [WithRetrier];
+// without one the execution makes a single attempt. When the policy approves a
+// retry, the engine invokes the OnRetry callback before its wait. A request
+// body built through the request package or
 // [Client.Request] is reusable, so every attempt resends it in full; a body
 // that cannot be rewound stops with the last outcome instead. When the primary
 // client fails with the HTTP/1.x transport broken error, an idempotent request
@@ -1517,9 +1467,9 @@ type RetryExhaustionHandler func(resp *http.Response, err error, attempts int) (
 //     history, and the last failure. A bounded body snapshot is included only
 //     when body capture is enabled with [WithRetryErrorBodyLimit]; a read
 //     error from that capture is exposed as [RetryError.BodyErr]. A configured
-//     [RetryExhaustionHandler] replaces this outcome. [WithRetryMax] with zero
-//     disables additional attempts but not this classification, so a persistent
-//     429 or 5xx still returns a [*RetryError].
+//     [RetryExhaustionHandler] replaces this outcome. With no retrier, the
+//     single attempt still classifies this way, so a persistent 429 or 5xx
+//     returns a [*RetryError].
 //   - A body that cannot be replayed on an approved retry: a nil response and
 //     a [*RetryError] built from the last response, without another attempt.
 //     The error matches [ErrBodyNotReplayable] with errors.Is and does not
@@ -1545,6 +1495,22 @@ type RetryExhaustionHandler func(resp *http.Response, err error, attempts int) (
 func (c *Client) Do(req *hqgohttprequest.Request, ofs ...RequestOptionFunc) (res *Response, err error) {
 	opts := c.requestOptions(ofs...)
 
+	res, err = c.doWrapped(req, opts)
+
+	return
+}
+
+// doWrapped executes req with the resolved options and wraps the raw response.
+// It backs [Client.Do] and [RequestBuilder.Do].
+//
+// Parameters:
+//   - req (*hqgohttprequest.Request): the request to execute.
+//   - opts (*RequestOptions): the resolved per-request configuration.
+//
+// Returns:
+//   - res (*Response): the wrapped response, or nil on failure.
+//   - err (error): non-nil when the execution fails.
+func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *RequestOptions) (res *Response, err error) {
 	raw, doErr := c.do(req, opts) //nolint:bodyclose // The response body is handed to the caller.
 	if raw == nil {
 		return nil, doErr
@@ -1605,8 +1571,8 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 		lastAttemptCancel context.CancelCauseFunc
 	)
 
-	if c.Timeout > 0 {
-		execTimer = time.AfterFunc(c.Timeout, func() {
+	if c.config.Timeout > 0 {
+		execTimer = time.AfterFunc(c.config.Timeout, func() {
 			cancel(context.DeadlineExceeded)
 		})
 	}
@@ -1632,7 +1598,7 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 	httpRequest := req.WithContext(reqCtx)
 	httpRequest.Header = req.Header.Clone()
 
-	applyDefaultHeaders(httpRequest, c.Headers)
+	applyDefaultHeaders(httpRequest, c.config.Headers)
 
 	if opts.MaxRequestBodySize > 0 && httpRequest.ContentLength > opts.MaxRequestBodySize {
 		err = fmt.Errorf("http.Client.Do: %w (limit %d bytes)", ErrRequestBodyTooLarge, opts.MaxRequestBodySize)
@@ -1645,7 +1611,7 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 	// HTTP/3 has no proxy support. Resolve the proxy that applies to this
 	// request so an auto client skips H3, and a forced HTTP/3 client fails
 	// instead of sending a request around the configured proxy.
-	primaryClient, fallbackClient := c.HTTPClient, c.fallbackHTTPClient
+	primaryClient, fallbackClient := c.config.HTTPClient, c.fallbackHTTPClient
 	fallbackOnHTTP3 := c.fallbackOnHTTP3
 
 	if c.http3Primary {
@@ -1679,10 +1645,11 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 		http3Attempt = false
 	}
 
-	// retryAfter carries the wait honored from a Retry-After header from the
-	// attempt operation to the backoff strategy. retryAfterSet distinguishes an
-	// honored zero wait from an absent header. Both run on the retry loop's
-	// goroutine, so plain variables are safe.
+	// retryAfter carries the wait parsed from a Retry-After header of the
+	// attempt that was approved for retry, exposed to the engine through
+	// [RetrierOptions.RetryAfter]. retryAfterSet distinguishes an honored zero
+	// wait from an absent header. Both run on the retry loop's goroutine, so
+	// plain variables are safe.
 	var (
 		retryAfter    time.Duration
 		retryAfterSet bool
@@ -1694,16 +1661,11 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 	// attempt was approved for retry.
 	attempt := 0
 
-	maxAttempts := opts.MaxRetries + 1
-	if maxAttempts <= 0 {
-		// Guard against overflow when the retry count is math.MaxInt.
-		maxAttempts = opts.MaxRetries
-	}
-
 	var (
 		lastAttemptRequest  *http.Request
 		lastAttemptResponse *http.Response
 		lastAttemptDuration time.Duration
+		lastResponseClosed  bool
 		history             []RetryAttempt
 	)
 
@@ -1805,6 +1767,7 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 
 		lastAttemptDuration = time.Since(attemptStart)
 		lastAttemptResponse = attemptRes
+		lastResponseClosed = false
 
 		if opts.OnResponse != nil {
 			opts.OnResponse(ResponseEvent{
@@ -1888,10 +1851,6 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 			attemptErr = fmt.Errorf("http.Client.Do: unexpected HTTP status %s", attemptRes.Status)
 		}
 
-		keepForHandler := opts.RetryExhaustionHandler != nil &&
-			attemptRes != nil && attemptRes.Body != nil &&
-			(final || attempt >= maxAttempts)
-
 		marker := &retryableError{
 			err:     attemptErr,
 			resp:    attemptRes,
@@ -1899,19 +1858,14 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 			final:   final,
 		}
 
-		if attemptRes != nil {
-			switch {
-			case keepForHandler:
-				// Leave the body open for the exhaustion handler.
-			case final || attempt >= maxAttempts:
-				marker.body, marker.bodyTruncated, marker.bodyErr = snapshotBody(attemptRes.Body, opts.RetryErrorBodyLimit)
-			default:
-				drainBody(attemptRes.Body, opts.ResponseReadLimit)
+		// The engine owns the attempt count, so this outcome may or may not be
+		// retried. Leave the response body open and its attempt context alive:
+		// OnRetry releases them before the next attempt, while Do snapshots or
+		// hands the body out when the engine stops.
+		if attemptRes == nil || attemptRes.Body == nil {
+			if attemptCancel != nil {
+				attemptCancel(nil)
 			}
-		}
-
-		if attemptCancel != nil && !keepForHandler {
-			attemptCancel(nil)
 		}
 
 		attemptErr = marker
@@ -1919,39 +1873,33 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 		return attemptRes, attemptErr
 	}
 
-	res, err = hqgoretrier.RetryWithData(reqCtx, operation,
-		hqgoretrier.WithMaxAttempts(maxAttempts),
-		hqgoretrier.WithWaitMin(opts.RetryWaitMin),
-		hqgoretrier.WithWaitMax(opts.RetryWaitMax),
-		hqgoretrier.WithBackoff(func(minDelay, maxDelay time.Duration) (backoff Backoff) {
-			base := opts.NewRetryBackoff(minDelay, maxDelay)
-
-			return func(attempt int) (delay time.Duration) {
-				if retryAfterSet {
-					delay = min(retryAfter, maxDelay)
-
-					retryAfter = 0
-					retryAfterSet = false
-
-					return delay
-				}
-
-				delay = base(attempt)
-
-				return delay
-			}
-		}),
-		hqgoretrier.WithRetryOn(isMarkedRetryable),
-		hqgoretrier.WithOnRetry(func(event hqgoretrier.RetryEvent) {
-			if opts.OnRetry == nil {
-				return
-			}
-
+	retrierOptions := RetrierOptions{
+		RetryOn: isMarkedRetryable,
+		OnRetry: func(event RetrierEvent) {
 			attemptErr := event.Err
 
+			// Release the failed attempt before the engine waits: the response
+			// body is no longer needed, and closing it lets the connection be
+			// reused while the per-attempt context can be canceled.
 			var marker *retryableError
 			if errors.As(attemptErr, &marker) {
+				if marker.resp != nil && marker.resp.Body != nil {
+					drainBody(marker.resp.Body, opts.ResponseReadLimit)
+
+					if marker.resp == lastAttemptResponse {
+						lastResponseClosed = true
+					}
+				}
+
 				attemptErr = marker.err
+			}
+
+			if lastAttemptCancel != nil {
+				lastAttemptCancel(nil)
+			}
+
+			if opts.OnRetry == nil {
+				return
 			}
 
 			opts.OnRetry(RetryEvent{
@@ -1962,8 +1910,21 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 				Wait:     event.Wait,
 				Duration: lastAttemptDuration,
 			})
-		}),
-	)
+		},
+		RetryAfter: func() (wait time.Duration, ok bool) {
+			return retryAfter, retryAfterSet
+		},
+	}
+
+	if opts.Retrier != nil {
+		res, err = opts.Retrier.Retry(reqCtx, operation, retrierOptions)
+	} else {
+		res, err = operation()
+	}
+
+	if res == nil && err == nil {
+		err = errors.New("http.Client.Do: retrier returned no response and no error")
+	}
 
 	// The execution ends when the response headers arrive. Stop the timer; if
 	// it already expired, record the deadline so a response is never handed
@@ -1984,6 +1945,10 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 		// unknown body state, so it is not handed out.
 		if res != nil && res.Body != nil {
 			_ = res.Body.Close()
+		}
+
+		if res != nil && res == lastAttemptResponse {
+			lastResponseClosed = true
 		}
 
 		res = nil
@@ -2009,6 +1974,10 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 				}
 			}
 
+			if lastAttemptCancel != nil {
+				lastAttemptCancel(nil)
+			}
+
 			res = nil
 
 			if handledErr != nil {
@@ -2016,10 +1985,23 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 
 				break
 			}
+		} else {
+			// The engine stopped with the final response's body still open;
+			// snapshot it for the RetryError and close it.
+			if marker.resp != nil && marker.resp.Body != nil {
+				marker.body, marker.bodyTruncated, marker.bodyErr = snapshotBody(marker.resp.Body, opts.RetryErrorBodyLimit)
+			}
+
+			if lastAttemptCancel != nil {
+				lastAttemptCancel(nil)
+			}
 		}
 
-		// Attempts exhausted: the last response's body was already drained or
-		// snapshotted and closed.
+		if marker.resp == lastAttemptResponse {
+			lastResponseClosed = true
+		}
+
+		// Attempts exhausted: the last response's body has been consumed.
 		res = nil
 
 		requestURL := ""
@@ -2049,6 +2031,10 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 	}
 
 	if res == nil {
+		if !lastResponseClosed && lastAttemptResponse != nil && lastAttemptResponse.Body != nil {
+			_ = lastAttemptResponse.Body.Close()
+		}
+
 		return nil, err
 	}
 
@@ -2068,8 +2054,8 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 
 	var bodyTimer *time.Timer
 
-	if c.ResponseBodyTimeout > 0 {
-		bodyTimer = time.AfterFunc(c.ResponseBodyTimeout, func() {
+	if c.config.ResponseBodyTimeout > 0 {
+		bodyTimer = time.AfterFunc(c.config.ResponseBodyTimeout, func() {
 			cancel(context.DeadlineExceeded)
 		})
 	}
@@ -2103,8 +2089,8 @@ func (c *Client) executionContext(req *http.Request) (ctx context.Context) {
 		return ctx
 	}
 
-	if c.DefaultContext != nil {
-		return c.DefaultContext
+	if c.config.DefaultContext != nil {
+		return c.config.DefaultContext
 	}
 
 	return ctx
@@ -2129,7 +2115,7 @@ func (c *Client) Close() {
 		c.closeCancel(ErrClientClosed)
 	}
 
-	if c.HTTPClient != nil {
+	if c.config.HTTPClient != nil {
 		c.CloseIdleConnections()
 	}
 }
@@ -2139,8 +2125,8 @@ func (c *Client) Close() {
 // In-flight requests are unaffected and the client remains usable. Use
 // [Client.Close] for a full shutdown.
 func (c *Client) CloseIdleConnections() {
-	if c.HTTPClient != nil && c.HTTPClient.Transport != nil {
-		c.HTTPClient.CloseIdleConnections()
+	if c.config.HTTPClient != nil && c.config.HTTPClient.Transport != nil {
+		c.config.HTTPClient.CloseIdleConnections()
 	}
 
 	if c.fallbackHTTPClient == nil || c.fallbackHTTPClient.Transport == nil {
@@ -2149,8 +2135,8 @@ func (c *Client) CloseIdleConnections() {
 
 	var primary http.RoundTripper
 
-	if c.HTTPClient != nil {
-		primary = c.HTTPClient.Transport
+	if c.config.HTTPClient != nil {
+		primary = c.config.HTTPClient.Transport
 	}
 
 	if !sameRoundTripper(primary, c.fallbackHTTPClient.Transport) {
@@ -2205,7 +2191,7 @@ func (c *Client) RoundTrip(req *http.Request) (res *http.Response, err error) {
 
 // Std returns an [http.Client] whose Transport is the receiver. It lets code
 // that expects a standard client, such as an OAuth2 transport wrapper, use the
-// retry engine.
+// client's execution path, including its retrier.
 //
 // Redirects, cookies, and timeouts remain those of the receiver. The returned
 // client stops at the first response it receives ([http.ErrUseLastResponse]),
@@ -2256,12 +2242,12 @@ func sameRoundTripper(a, b http.RoundTripper) (same bool) {
 // reaches a multiple of the configured threshold, closes idle connections. A
 // non-positive threshold disables the periodic closing.
 func (c *Client) closeIdleConnectionsIfDue() {
-	if c.MaxRequestsBeforeIdleClose <= 0 {
+	if c.config.MaxRequestsBeforeIdleClose <= 0 {
 		return
 	}
 
 	count := c.requestCount.Add(1)
-	if count%uint64(c.MaxRequestsBeforeIdleClose) != 0 {
+	if count%uint64(c.config.MaxRequestsBeforeIdleClose) != 0 {
 		return
 	}
 
@@ -2575,27 +2561,6 @@ const (
 	// context still governs reads, but the execution timeout does not.
 	DefaultResponseBodyTimeout = 0 * time.Second
 
-	// DefaultRetryMax is the default number of retries after the initial
-	// attempt, so a client performs up to 3 attempts per request by default.
-	//
-	// It applies when [WithRetryMax] is not supplied, and when a supplied
-	// value below 0 is normalized back to the default.
-	DefaultRetryMax = 2
-
-	// DefaultRetryWaitMin is the default minimum delay between retry attempts,
-	// serving as the base delay for backoff calculations.
-	//
-	// It applies when [WithRetryWaitMin] is not supplied, and when a supplied
-	// value less than or equal to 0 is normalized back to the default.
-	DefaultRetryWaitMin = 1 * time.Second
-
-	// DefaultRetryWaitMax is the default maximum delay between retry attempts.
-	// It also caps the wait honored from a Retry-After response header.
-	//
-	// It applies when [WithRetryWaitMax] is not supplied, and when a supplied
-	// value less than or equal to 0 is normalized back to the default.
-	DefaultRetryWaitMax = 30 * time.Second
-
 	// DefaultResponseReadLimit is the default maximum number of bytes drained
 	// from the body of a response that will be retried, so the underlying
 	// connection can be reused.
@@ -2612,26 +2577,6 @@ const (
 	// over it.
 	DefaultUserAgent = "hq-lib-http-go (https://github.com/hueristiq/hq-lib-http-go)"
 )
-
-// normalizeRetryBounds orders the retry wait bounds: non-positive values fall
-// back to their defaults, and a maximum below the minimum is raised to it.
-//
-// Parameters:
-//   - waitMin (*time.Duration): the minimum delay to normalize in place.
-//   - waitMax (*time.Duration): the maximum delay to normalize in place.
-func normalizeRetryBounds(waitMin, waitMax *time.Duration) {
-	if *waitMin <= 0 {
-		*waitMin = DefaultRetryWaitMin
-	}
-
-	if *waitMax <= 0 {
-		*waitMax = DefaultRetryWaitMax
-	}
-
-	if *waitMax < *waitMin {
-		*waitMax = *waitMin
-	}
-}
 
 // Protocol selects the HTTP version used by a [Client].
 //
@@ -2691,53 +2636,53 @@ const DefaultHTTP3FallbackTTL = time.Minute
 // configured protocol. A custom client takes precedence over the protocol
 // mode; the existing h2c fallback is installed for it.
 func (c *Client) buildHTTPClients() {
-	if c.HTTPClient != nil {
-		if c.checkRedirectSet || c.cookieJarSet {
-			c.HTTPClient = c.applyClientOptions(cloneHTTPClient(c.HTTPClient))
+	if c.config.HTTPClient != nil {
+		if c.config.checkRedirectSet || c.config.cookieJarSet {
+			c.config.HTTPClient = c.applyClientOptions(cloneHTTPClient(c.config.HTTPClient))
 		}
 
-		c.fallbackHTTPClient = newFallbackClient(c.HTTPClient, nil)
+		c.fallbackHTTPClient = newFallbackClient(c.config.HTTPClient, nil)
 
 		return
 	}
 
-	switch c.Protocol {
+	switch c.config.Protocol {
 	case ProtocolAuto:
-		c.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
+		c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
 	case ProtocolHTTP1:
-		c.HTTPClient = newHTTP1Client(c.TLSConfig)
-		c.HTTPClient.Transport = c.configureTransport(c.Protocol, c.HTTPClient.Transport)
-		c.applyClientOptions(c.HTTPClient)
+		c.config.HTTPClient = newHTTP1Client(c.config.TLSConfig)
+		c.config.HTTPClient.Transport = c.configureTransport(c.config.Protocol, c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
 	case ProtocolHTTP2:
-		c.HTTPClient = newHTTP2Client(c.TLSConfig)
-		c.HTTPClient.Transport = c.configureTransport(c.Protocol, c.HTTPClient.Transport)
-		c.applyClientOptions(c.HTTPClient)
+		c.config.HTTPClient = newHTTP2Client(c.config.TLSConfig)
+		c.config.HTTPClient.Transport = c.configureTransport(c.config.Protocol, c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
 	case ProtocolHTTP3:
-		c.HTTPClient = newHTTP3Client(c.TLSConfig)
+		c.config.HTTPClient = newHTTP3Client(c.config.TLSConfig)
 
-		if c.Transport == nil {
-			c.HTTPClient.Transport = c.configureHTTP3Transport(c.HTTPClient.Transport)
+		if c.config.Transport == nil {
+			c.config.HTTPClient.Transport = c.configureHTTP3Transport(c.config.HTTPClient.Transport)
 		}
 
-		c.HTTPClient.Transport = c.configureTransport(c.Protocol, c.HTTPClient.Transport)
-		c.applyClientOptions(c.HTTPClient)
-		c.http3Primary = c.Transport == nil
+		c.config.HTTPClient.Transport = c.configureTransport(c.config.Protocol, c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
+		c.http3Primary = c.config.Transport == nil
 	case ProtocolAutoHTTP3:
-		if c.Transport != nil {
-			c.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
+		if c.config.Transport != nil {
+			c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
 
 			return
 		}
 
-		c.HTTPClient = newHTTP3Client(c.TLSConfig)
-		c.HTTPClient.Transport = c.configureHTTP3Transport(c.HTTPClient.Transport)
-		c.HTTPClient.Transport = c.applyTransportWrapper(c.HTTPClient.Transport)
-		c.applyClientOptions(c.HTTPClient)
+		c.config.HTTPClient = newHTTP3Client(c.config.TLSConfig)
+		c.config.HTTPClient.Transport = c.configureHTTP3Transport(c.config.HTTPClient.Transport)
+		c.config.HTTPClient.Transport = c.applyTransportWrapper(c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
 		c.fallbackHTTPClient = c.buildAutoClient()
 		c.fallbackOnHTTP3 = true
 		c.http3Primary = true
 	default:
-		c.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
+		c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
 	}
 }
 
@@ -2787,6 +2732,10 @@ func isHTTP3FallbackError(err error) (fallback bool) {
 	return fallback
 }
 
+// http3FailureSweepInterval is the number of failure-cache writes between
+// expired-entry sweeps.
+const http3FailureSweepInterval = 64
+
 // http3RecentlyFailed reports whether host failed an HTTP/3 attempt within the
 // configured fallback TTL. An expired entry is removed. A non-positive TTL or
 // an empty host disables the cache.
@@ -2797,7 +2746,7 @@ func isHTTP3FallbackError(err error) (fallback bool) {
 // Returns:
 //   - failed (bool): true when the host should skip HTTP/3 for now.
 func (c *Client) http3RecentlyFailed(host string) (failed bool) {
-	if c.HTTP3FallbackTTL <= 0 || host == "" {
+	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
 		return false
 	}
 
@@ -2807,7 +2756,7 @@ func (c *Client) http3RecentlyFailed(host string) (failed bool) {
 	}
 
 	failedAt, ok := value.(time.Time)
-	if !ok || time.Since(failedAt) >= c.HTTP3FallbackTTL {
+	if !ok || time.Since(failedAt) >= c.config.HTTP3FallbackTTL {
 		c.http3Failures.Delete(host)
 
 		return false
@@ -2819,16 +2768,39 @@ func (c *Client) http3RecentlyFailed(host string) (failed bool) {
 }
 
 // recordHTTP3Failure remembers that host failed an HTTP/3 attempt. The entry
-// expires after the configured fallback TTL.
+// expires after the configured fallback TTL. Expired entries are swept every
+// [http3FailureSweepInterval] writes so unique failing hosts cannot grow the
+// cache without bound.
 //
 // Parameters:
 //   - host (string): the request URL's host, including a port when present.
 func (c *Client) recordHTTP3Failure(host string) {
-	if c.HTTP3FallbackTTL <= 0 || host == "" {
+	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
 		return
 	}
 
 	c.http3Failures.Store(host, time.Now())
+
+	if c.http3FailureWrites.Add(1)%http3FailureSweepInterval == 0 {
+		c.pruneHTTP3Failures()
+	}
+}
+
+// pruneHTTP3Failures removes expired entries from the HTTP/3 failure cache.
+func (c *Client) pruneHTTP3Failures() {
+	ttl := c.config.HTTP3FallbackTTL
+	if ttl <= 0 {
+		return
+	}
+
+	c.http3Failures.Range(func(key, value any) bool {
+		failedAt, ok := value.(time.Time)
+		if !ok || time.Since(failedAt) >= ttl {
+			c.http3Failures.Delete(key)
+		}
+
+		return true
+	})
 }
 
 // clearHTTP3Failure removes a host from the HTTP/3 failure cache after a

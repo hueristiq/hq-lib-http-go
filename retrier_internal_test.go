@@ -18,6 +18,63 @@ import (
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 )
 
+// internalTestRetrier is a minimal [Retrier] for tests in this package. It
+// retries errors approved by options.RetryOn with a fixed wait.
+//
+// Fields:
+//   - maxAttempts (int): maximum attempts; non-positive means 3.
+//   - wait (time.Duration): delay between attempts; non-positive means 1 ms.
+type internalTestRetrier struct {
+	maxAttempts int
+	wait        time.Duration
+}
+
+// Retry implements [Retrier].
+func (r internalTestRetrier) Retry(ctx context.Context, operation RetryOperation, options RetrierOptions) (res *http.Response, err error) {
+	maxAttempts := r.maxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	wait := r.wait
+	if wait <= 0 {
+		wait = time.Millisecond
+	}
+
+	for attempt := 1; ; attempt++ {
+		if cause := context.Cause(ctx); cause != nil {
+			return res, cause
+		}
+
+		res, err = operation()
+		if err == nil {
+			return res, nil
+		}
+
+		if options.RetryOn != nil && !options.RetryOn(err) {
+			return res, err
+		}
+
+		if attempt >= maxAttempts {
+			return res, err
+		}
+
+		if options.OnRetry != nil {
+			options.OnRetry(RetrierEvent{Attempt: attempt, Err: err, Wait: wait})
+		}
+
+		timer := time.NewTimer(wait)
+
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+
+			return res, context.Cause(ctx)
+		}
+	}
+}
+
 func TestRetryAfterWait(t *testing.T) {
 	t.Parallel()
 

@@ -16,8 +16,113 @@ import (
 
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
-	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
+
+// RetryOperation is the attempt function a [Retrier] runs. Each call performs
+// one attempt and returns its response and error. It receives no context;
+// capture the context passed to [Retrier.Retry] when an attempt needs
+// cancellation or a deadline.
+//
+// It is an alias for the plain function type rather than a defined type, so it
+// can be handed to an engine expecting its own identical operation type, such
+// as hq-lib-retrier-go's OperationWithData.
+type RetryOperation = func() (res *http.Response, err error)
+
+// Retrier runs one request execution's attempts. It is the minimal surface the
+// client needs from a retry engine: the engine owns the attempt count, waits,
+// and backoff, while the client supplies the operation and the HTTP-specific
+// hooks in [RetrierOptions]. An application adapts an engine itself — for
+// example hq-lib-retrier-go through [RetrierFunc] — so no module dependency is
+// imposed. With no retrier registered, [Client.Do] makes a single attempt.
+//
+// Methods:
+//   - Retry(ctx context.Context, operation RetryOperation, options RetrierOptions) (res *http.Response, err error):
+//     runs operation with retries and returns the final result and error.
+//
+// Retry must call operation at least once and serially, stop when
+// options.RetryOn rejects an error, invoke options.OnRetry after approving a
+// retry and before the wait, prefer options.RetryAfter over its backoff when it
+// reports a wait, and return as soon as ctx ends. It returns the last attempt's
+// result and error when it stops, and must not return a nil response with a nil
+// error. A retrier shared across executions must be safe for concurrent use;
+// the operation itself is not safe for concurrent calls.
+type Retrier interface {
+	// Retry runs operation under the engine's policy and the supplied hooks.
+	//
+	// Parameters:
+	//   - ctx (context.Context): the context bounding every attempt and wait.
+	//   - operation (RetryOperation): the attempt to run.
+	//   - options (RetrierOptions): the client-supplied hooks.
+	//
+	// Returns:
+	//   - res (*http.Response): the last attempt's response, or nil.
+	//   - err (error): the last attempt's error, or the context's cause when it
+	//     ended the execution.
+	Retry(ctx context.Context, operation RetryOperation, options RetrierOptions) (res *http.Response, err error)
+}
+
+// RetrierFunc adapts an ordinary function to a [Retrier]. It is the place to
+// bridge an engine whose method set does not match the interface — for example
+// hq-lib-retrier-go — without imposing a module dependency.
+type RetrierFunc func(ctx context.Context, operation RetryOperation, options RetrierOptions) (res *http.Response, err error)
+
+// Compile-time guard ensuring [RetrierFunc] satisfies [Retrier].
+var _ Retrier = RetrierFunc(nil)
+
+// Retry calls f(ctx, operation, options).
+//
+// Parameters:
+//   - ctx (context.Context): the context bounding every attempt and wait.
+//   - operation (RetryOperation): the attempt to run.
+//   - options (RetrierOptions): the client-supplied hooks.
+//
+// Returns:
+//   - res (*http.Response): whatever f returns.
+//   - err (error): whatever f returns, or a nil-retrier error when f is nil.
+func (f RetrierFunc) Retry(ctx context.Context, operation RetryOperation, options RetrierOptions) (res *http.Response, err error) {
+	if f == nil {
+		return nil, errors.New("http.RetrierFunc: nil retrier")
+	}
+
+	return f(ctx, operation, options)
+}
+
+// RetrierOptions carries the hooks and per-attempt information the client
+// supplies to a [Retrier]. The engine's own policy — attempt count, waits, and
+// backoff — is configured by the application when it builds the engine, so
+// these fields do not duplicate it.
+//
+// Fields:
+//   - RetryOn (func(err error) (retry bool)): decides whether the failed
+//     attempt's error is retryable. Always non-nil; it recognizes the client's
+//     internal retry marker.
+//   - OnRetry (func(event RetrierEvent)): invoked by the engine after a retry is
+//     approved and before the wait. Always non-nil; the client releases the
+//     failed attempt's response body and per-attempt context before forwarding
+//     the event to the configured callback.
+//   - RetryAfter (func() (wait time.Duration, ok bool)): reports the wait parsed
+//     from the last retried response's Retry-After header. Always non-nil; ok is
+//     false when the header is absent or invalid. The engine should prefer the
+//     wait over its backoff, capped at its own maximum. Reading it has no side
+//     effects; the value is reset when the next attempt starts.
+type RetrierOptions struct {
+	RetryOn    func(err error) (retry bool)
+	OnRetry    func(event RetrierEvent)
+	RetryAfter func() (wait time.Duration, ok bool)
+}
+
+// RetrierEvent carries the data of one failed attempt that will be retried,
+// passed to [RetrierOptions.OnRetry].
+//
+// Fields:
+//   - Attempt (int): number of the attempt that just failed, starting at 1.
+//   - Err (error): error the failed attempt returned; never nil.
+//   - Wait (time.Duration): delay the engine computed before the next attempt.
+type RetrierEvent struct {
+	Attempt int
+	Err     error
+	Wait    time.Duration
+}
 
 // isMarkedRetryable reports whether err carries the retryable marker and is not
 // final, i.e. whether the retry engine should schedule another attempt. Errors
@@ -190,11 +295,6 @@ func rewindRequestBody(req *http.Request) (err error) {
 	return nil
 }
 
-// Backoff is the delay strategy used between retry attempts. It receives the
-// 1-based number of the failed attempt and returns the delay before the next
-// one.
-type Backoff = hqgoretrierbackoff.Backoff
-
 // RetryPolicy decides whether a request is retried after an attempt.
 //
 // It is invoked after every attempt with the attempt's outcome: the overall
@@ -311,8 +411,9 @@ func DefaultRetryPolicy(ctx context.Context, _ *http.Request, resp *http.Respons
 
 	if resp != nil {
 		// 429 Too Many Requests and 408 Request Timeout are recoverable.
-		// Servers may add a Retry-After header, which the retry engine honors
-		// (capped at the maximum retry wait).
+		// Servers may add a Retry-After header, which the client exposes to the
+		// retrier through RetrierOptions.RetryAfter; the engine decides whether
+		// to honor and cap it.
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusRequestTimeout {
 			retry = true
 
@@ -412,8 +513,8 @@ const RecommendedRetryErrorBodyLimit int64 = 64 << 10
 //
 // Body capture is disabled by default because response payloads can contain
 // credentials, session tokens, or personal data. When enabled, treat
-// [RetryError.Body] and [RetryError.Header] as sensitive and redact them before
-// logging.
+// [RetryError.Body], [RetryError.Header], and the query string in
+// [RetryError.URL] as sensitive and redact them before logging.
 //
 // Use errors.As to retrieve it:
 //
@@ -422,12 +523,17 @@ const RecommendedRetryErrorBodyLimit int64 = 64 << 10
 //		fmt.Println(retryErr.StatusCode, string(retryErr.Body))
 //	}
 //
-// It matches [ErrRetriesExhausted] when the retry budget was exhausted.
+// It matches [ErrRetriesExhausted] when the retry budget was exhausted. With no
+// retrier configured, a policy-approved failure on an idempotent method such as
+// a GET 5xx still produces a RetryError after one attempt, while a POST or
+// PATCH returns its response with a nil error because idempotency blocks the
+// retry.
 //
 // Fields:
 //   - Attempts (int): the number of attempts made, including the first one.
 //   - Method (string): the request method.
-//   - URL (string): the request URL with credentials redacted.
+//   - URL (string): the request URL with the userinfo password redacted; query
+//     parameters are preserved and may contain secrets.
 //   - StatusCode (int): the last response's status code, or zero.
 //   - Status (string): the last response's status line, or empty.
 //   - Header (http.Header): a clone of the last response's headers, or nil.
@@ -631,7 +737,7 @@ func retryAfterWait(resp *http.Response) (wait time.Duration, ok bool) {
 		}
 
 		// Clamp before converting so a huge value cannot overflow into a
-		// negative duration. The retry engine caps the wait at its maximum
+		// negative duration. The engine should cap the wait at its maximum
 		// anyway; this keeps the parsed value well-defined.
 		if maxSeconds := int64(math.MaxInt64) / int64(time.Second); seconds > maxSeconds {
 			seconds = maxSeconds

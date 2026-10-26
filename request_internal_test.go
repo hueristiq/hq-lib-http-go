@@ -10,23 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
-	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
 
 func TestRequestOptionFuncs(t *testing.T) {
 	t.Parallel()
-
-	baseBackoff := func(minDelay, _ time.Duration) (backoff hqgoretrierbackoff.Backoff) {
-		return func(_ int) (delay time.Duration) {
-			return minDelay
-		}
-	}
-
-	otherBackoff := func(minDelay, _ time.Duration) (backoff hqgoretrierbackoff.Backoff) {
-		return func(_ int) (delay time.Duration) {
-			return minDelay * 2
-		}
-	}
 
 	basePolicy := func(_ context.Context, _ *http.Request, _ *http.Response, _ error, _ int) (retry bool, rerr error) {
 		return false, nil
@@ -38,48 +25,23 @@ func TestRequestOptionFuncs(t *testing.T) {
 
 	baseLimiter := testRateLimiter{}
 
+	baseRetrier := internalTestRetrier{maxAttempts: 1}
+	otherRetrier := internalTestRetrier{maxAttempts: 2}
+
 	opts := &RequestOptions{
-		MaxRetries:        7,
-		RetryWaitMin:      time.Second,
-		RetryWaitMax:      2 * time.Second,
-		NewRetryBackoff:   baseBackoff,
+		Retrier:           baseRetrier,
 		RetryPolicy:       basePolicy,
 		RateLimiter:       baseLimiter,
 		ResponseReadLimit: 9,
 	}
 
-	WithRequestRetryMax(-1)(opts)
+	WithRequestRetrier(nil)(opts)
 
-	assert.Equal(t, 7, opts.MaxRetries, "Expected a negative override to be ignored")
+	assert.Nil(t, opts.Retrier, "Expected a nil override to disable retries")
 
-	WithRequestRetryMax(3)(opts)
+	WithRequestRetrier(otherRetrier)(opts)
 
-	assert.Equal(t, 3, opts.MaxRetries)
-
-	WithRequestRetryWaitMin(0)(opts)
-
-	assert.Equal(t, time.Second, opts.RetryWaitMin, "Expected a non-positive override to be ignored")
-
-	WithRequestRetryWaitMin(500 * time.Millisecond)(opts)
-
-	assert.Equal(t, 500*time.Millisecond, opts.RetryWaitMin)
-
-	WithRequestRetryWaitMax(0)(opts)
-
-	assert.Equal(t, 2*time.Second, opts.RetryWaitMax, "Expected a non-positive override to be ignored")
-
-	WithRequestRetryWaitMax(3 * time.Second)(opts)
-
-	assert.Equal(t, 3*time.Second, opts.RetryWaitMax)
-
-	WithRequestRetryBackoff(nil)(opts)
-
-	assert.NotNil(t, opts.NewRetryBackoff, "Expected a nil override to be ignored")
-
-	WithRequestRetryBackoff(otherBackoff)(opts)
-
-	assert.NotNil(t, opts.NewRetryBackoff)
-	assert.Equal(t, 2*time.Second, opts.NewRetryBackoff(time.Second, 0)(0))
+	assert.Equal(t, otherRetrier, opts.Retrier)
 
 	WithRequestRetryPolicy(nil)(opts)
 

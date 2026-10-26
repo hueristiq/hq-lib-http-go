@@ -12,6 +12,11 @@ import "strings"
 //   - All other characters are lowercase.
 //   - Hyphens are preserved as separators.
 //
+// The casing follows net/textproto, not the IANA-preferred spelling: "ETag"
+// becomes "Etag" and "WWW-Authenticate" becomes "Www-Authenticate". Header names
+// are case-insensitive on the wire, so this is safe for transport, but the
+// result can differ from the constants in this package.
+//
 // Parameters:
 //   - key (string): the input header key to canonicalize (e.g., "content-type", "ACCEPT-RANGES").
 //

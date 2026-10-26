@@ -1,14 +1,11 @@
 package header
 
-// Header represents an HTTP header field as defined by IANA.
+// Header represents an HTTP header field name.
 //
-// The underlying type is string, which allows seamless conversion and integration
-// with other string-based operations, such as HTTP request/response handling in
-// standard libraries (e.g., net/http). Using a custom type like Header ensures
-// type safety, improves code readability, and minimizes errors from invalid or
-// mistyped header names. This type is intended to be used in contexts where HTTP
-// headers are set, retrieved, or manipulated, such as in HTTP servers, clients,
-// or middleware.
+// Header is a defined string type, so it integrates with string-based APIs such
+// as net/http and gives the constants below a distinct type. Conversion from
+// any string is allowed; the type does not validate header names. The constants
+// reduce typos and document the common names.
 type Header string
 
 // String converts the Header to its underlying string representation.
@@ -28,11 +25,10 @@ func (h Header) String() (header string) {
 
 // Predefined HTTP header constants.
 //
-// The constants below represent commonly used HTTP header fields as defined by
-// IANA (Internet Assigned Numbers Authority) and other relevant RFCs (e.g., RFC
-// 7231, RFC 7540). They are declared as type Header to enforce type safety and
-// prevent typographical errors in header names. Using these constants improves
-// code clarity, maintainability, and consistency across a codebase.
+// The constants below represent commonly used HTTP header fields: fields
+// registered by IANA, plus de facto and historical fields still seen in the
+// wild. They are declared as type Header to make the intent clear and prevent
+// typographical errors in header names.
 //
 // These headers cover a wide range of use cases, including:
 //   - CORS (Cross-Origin Resource Sharing): Headers like Access-Control-Allow-Origin.
@@ -96,66 +92,67 @@ const (
 	IfNoneMatch                     Header = "If-None-Match"
 	IfRange                         Header = "If-Range"
 	IfUnmodifiedSince               Header = "If-Unmodified-Since"
-	Index                           Header = "Index"
-	KeepAlive                       Header = "Keep-Alive"
-	LargeAllocation                 Header = "Large-Allocation"
-	LastEventID                     Header = "Last-Event-ID"
-	LastModified                    Header = "Last-Modified"
-	Link                            Header = "Link"
-	Location                        Header = "Location"
-	MaxForwards                     Header = "Max-Forwards"
-	NEL                             Header = "NEL"
-	Origin                          Header = "Origin"
-	PingFrom                        Header = "Ping-From"
-	PingTo                          Header = "Ping-To"
-	Pragma                          Header = "Pragma"
-	ProxyAuthenticate               Header = "Proxy-Authenticate"
-	ProxyAuthorization              Header = "Proxy-Authorization"
-	ProxyConnection                 Header = "Proxy-Connection"
-	PushPolicy                      Header = "Push-Policy"
-	Range                           Header = "Range"
-	Referer                         Header = "Referer"
-	ReferrerPolicy                  Header = "Referrer-Policy"
-	ReportTo                        Header = "Report-To"
-	RetryAfter                      Header = "Retry-After"
-	SaveData                        Header = "Save-Data"
-	SecWebSocketAccept              Header = "Sec-WebSocket-Accept"
-	SecWebSocketExtensions          Header = "Sec-WebSocket-Extensions"
-	SecWebSocketKey                 Header = "Sec-WebSocket-Key"
-	SecWebSocketProtocol            Header = "Sec-WebSocket-Protocol"
-	SecWebSocketVersion             Header = "Sec-WebSocket-Version"
-	Server                          Header = "Server"
-	ServerTiming                    Header = "Server-Timing"
-	SetCookie                       Header = "Set-Cookie"
-	Signature                       Header = "Signature"
-	SignedHeaders                   Header = "Signed-Headers"
-	SourceMap                       Header = "SourceMap"
-	StrictTransportSecurity         Header = "Strict-Transport-Security"
-	TE                              Header = "TE"
-	TimingAllowOrigin               Header = "Timing-Allow-Origin"
-	Tk                              Header = "Tk"
-	Trailer                         Header = "Trailer"
-	TransferEncoding                Header = "Transfer-Encoding"
-	Upgrade                         Header = "Upgrade"
-	UpgradeInsecureRequests         Header = "Upgrade-Insecure-Requests"
-	UserAgent                       Header = "User-Agent"
-	Vary                            Header = "Vary"
-	Via                             Header = "Via"
-	ViewportWidth                   Header = "Viewport-Width"
-	Warning                         Header = "Warning"
-	WWWAuthenticate                 Header = "WWW-Authenticate"
-	Width                           Header = "Width"
-	XContentTypeOptions             Header = "X-Content-Type-Options"
-	XDNSPrefetchControl             Header = "X-DNS-Prefetch-Control"
-	XDownloadOptions                Header = "X-Download-Options"
-	XFrameOptions                   Header = "X-Frame-Options"
-	XForwardedFor                   Header = "X-Forwarded-For"
-	XForwardedHost                  Header = "X-Forwarded-Host"
-	XForwardedProto                 Header = "X-Forwarded-Proto"
-	XPingback                       Header = "X-Pingback"
-	XPermittedCrossDomainPolicies   Header = "X-Permitted-Cross-Domain-Policies"
-	XPoweredBy                      Header = "X-Powered-By"
-	XRateLimitRemaining             Header = "X-RateLimit-Remaining"
+	// Deprecated: Index is not an HTTP header field.
+	Index                         Header = "Index"
+	KeepAlive                     Header = "Keep-Alive"
+	LargeAllocation               Header = "Large-Allocation"
+	LastEventID                   Header = "Last-Event-ID"
+	LastModified                  Header = "Last-Modified"
+	Link                          Header = "Link"
+	Location                      Header = "Location"
+	MaxForwards                   Header = "Max-Forwards"
+	NEL                           Header = "NEL"
+	Origin                        Header = "Origin"
+	PingFrom                      Header = "Ping-From"
+	PingTo                        Header = "Ping-To"
+	Pragma                        Header = "Pragma"
+	ProxyAuthenticate             Header = "Proxy-Authenticate"
+	ProxyAuthorization            Header = "Proxy-Authorization"
+	ProxyConnection               Header = "Proxy-Connection"
+	PushPolicy                    Header = "Push-Policy"
+	Range                         Header = "Range"
+	Referer                       Header = "Referer"
+	ReferrerPolicy                Header = "Referrer-Policy"
+	ReportTo                      Header = "Report-To"
+	RetryAfter                    Header = "Retry-After"
+	SaveData                      Header = "Save-Data"
+	SecWebSocketAccept            Header = "Sec-WebSocket-Accept"
+	SecWebSocketExtensions        Header = "Sec-WebSocket-Extensions"
+	SecWebSocketKey               Header = "Sec-WebSocket-Key"
+	SecWebSocketProtocol          Header = "Sec-WebSocket-Protocol"
+	SecWebSocketVersion           Header = "Sec-WebSocket-Version"
+	Server                        Header = "Server"
+	ServerTiming                  Header = "Server-Timing"
+	SetCookie                     Header = "Set-Cookie"
+	Signature                     Header = "Signature"
+	SignedHeaders                 Header = "Signed-Headers"
+	SourceMap                     Header = "SourceMap"
+	StrictTransportSecurity       Header = "Strict-Transport-Security"
+	TE                            Header = "TE"
+	TimingAllowOrigin             Header = "Timing-Allow-Origin"
+	Tk                            Header = "Tk"
+	Trailer                       Header = "Trailer"
+	TransferEncoding              Header = "Transfer-Encoding"
+	Upgrade                       Header = "Upgrade"
+	UpgradeInsecureRequests       Header = "Upgrade-Insecure-Requests"
+	UserAgent                     Header = "User-Agent"
+	Vary                          Header = "Vary"
+	Via                           Header = "Via"
+	ViewportWidth                 Header = "Viewport-Width"
+	Warning                       Header = "Warning"
+	WWWAuthenticate               Header = "WWW-Authenticate"
+	Width                         Header = "Width"
+	XContentTypeOptions           Header = "X-Content-Type-Options"
+	XDNSPrefetchControl           Header = "X-DNS-Prefetch-Control"
+	XDownloadOptions              Header = "X-Download-Options"
+	XFrameOptions                 Header = "X-Frame-Options"
+	XForwardedFor                 Header = "X-Forwarded-For"
+	XForwardedHost                Header = "X-Forwarded-Host"
+	XForwardedProto               Header = "X-Forwarded-Proto"
+	XPingback                     Header = "X-Pingback"
+	XPermittedCrossDomainPolicies Header = "X-Permitted-Cross-Domain-Policies"
+	XPoweredBy                    Header = "X-Powered-By"
+	XRateLimitRemaining           Header = "X-RateLimit-Remaining"
 
 	// Deprecated: the canonical casing is XRateLimitRemaining.
 	XRatelimitRemaining Header = "X-RateLimit-Remaining"

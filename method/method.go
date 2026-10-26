@@ -1,9 +1,10 @@
 package method
 
-// Method represents an HTTP method as defined by IANA.
+// Method represents an HTTP method.
 //
-// The Method type is a string alias that encapsulates common HTTP methods such as GET, POST, PUT, etc.
-// This strong typing improves code clarity and type safety by ensuring only valid HTTP method names are used.
+// Method is a defined string type. Conversion from any string is allowed; the
+// type does not validate method names. The constants below cover the common
+// methods registered by IANA and used by HTTP tooling.
 type Method string
 
 // String returns the underlying string representation of the Method.
@@ -21,10 +22,10 @@ func (m Method) String() (method string) {
 
 // Predefined HTTP method constants.
 //
-// These constants represent the most common HTTP methods and are declared as type Method to ensure
-// type safety and to prevent common errors such as misspelling method names. Although some of these
-// methods (like POST, PUT, DELETE, and PATCH) may cause changes on the server, they are included
-// here to cover a full range of common HTTP operations.
+// These constants cover the common HTTP methods and are declared as type Method
+// to make their intent clear and prevent misspellings. Although some of these
+// methods (such as POST, PUT, DELETE, and PATCH) may change server state, they
+// are included to cover the common HTTP operations.
 const (
 	CONNECT Method = "CONNECT"
 	DELETE  Method = "DELETE"

@@ -5,12 +5,11 @@ import (
 	"net/http"
 )
 
-// Status represents HTTP status codes as defined by the IANA registry.
+// Status represents an HTTP status code.
 //
-// As an integer alias, Status allows developers to work with HTTP status codes
-// in a type-safe manner. In addition to retrieving the raw numeric code,
-// it provides methods for obtaining a human-readable description and for
-// categorizing the code by its response class.
+// Status is a defined int type. Conversion from any int is allowed; the type
+// does not validate the code. It provides the numeric value, the standard
+// reason phrase, and helpers for classifying the response.
 type Status int
 
 // Int returns the integer (numeric) representation of the Status instance.
@@ -136,7 +135,6 @@ const (
 	SeeOther                      Status = 303
 	NotModified                   Status = 304
 	UseProxy                      Status = 305
-	_                             Status = 306
 	TemporaryRedirect             Status = 307
 	PermanentRedirect             Status = 308
 	BadRequest                    Status = 400

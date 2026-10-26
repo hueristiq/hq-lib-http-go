@@ -37,18 +37,22 @@
 // [RequestBuilder.BodyStream] and [MultipartForm.Stream]. A reader passed to
 // [RequestBuilder.Body] is buffered when the setter is called, so repeated
 // executions replay it, and an empty buffered body is sent with
-// Content-Length: 0. Buffered bodies are replayable on retries;
-// [WithMaxRequestBodySize] caps them. [RequestBuilder.Param] appends to the raw
-// query without rewriting existing pairs. [RequestBuilder.Context] sets a
-// per-request context; [WithContext] sets a client-level default.
+// Content-Length: 0. A reader implementing io.Closer is closed after buffering.
+// Buffered bodies are replayable on retries; [WithMaxRequestBodySize] bounds
+// raw-reader and multipart buffering and is checked after JSON, XML, and form
+// encoding. [RequestBuilder.Param] appends to the raw query without rewriting
+// existing pairs. [RequestBuilder.Context] sets a per-request context,
+// including an explicit [context.Background]; [WithContext] sets a client-level
+// default.
 //
 // [Client.Close] shuts a client down: it cancels in-flight executions with
 // [ErrClientClosed], closes idle connections, and rejects later executions.
 // [Client.CloseIdleConnections] releases pooled connections without disabling
 // the client.
 //
-// [Client.Std] returns a standard [http.Client] whose transport is the retry
-// engine, and [Client.RoundTrip] implements [http.RoundTripper] directly. Both
+// [Client.Std] returns a standard [http.Client] whose transport runs the same
+// execution path, and [Client.RoundTrip] implements [http.RoundTripper]
+// directly. Both
 // preserve the client's redirect policy. A received response, including a 5xx,
 // is returned with a nil error as the standard interfaces require, except for a
 // redirect-policy abort, which is passed through with its error.
@@ -63,11 +67,10 @@
 // [WithHTTPClient], [WithTransport], [WithTransportBuilder],
 // [WithHTTP3TransportBuilder], [WithTransportWrapper], [WithDialContext],
 // [WithDialer], [WithTLSHandshakeTimeout], [WithProxy], [WithCheckRedirect],
-// [WithCookieJar], [WithHeader] (including a User-Agent default), the retry
-// knobs ([WithRetryMax], [WithRetryWaitMin], [WithRetryWaitMax],
-// [WithRetryBackoff], [WithRetryPolicy], [WithRetryIdempotent],
-// [WithRetryErrorBodyLimit]), [WithOnRetryExhaustion], [WithPrepareRetry],
-// [WithRateLimiter], the observability callbacks ([WithOnRequest],
+// [WithCookieJar], [WithHeader] (including a User-Agent default),
+// [WithURLParser], [WithRetrier], the retry policy options ([WithRetryPolicy],
+// [WithRetryIdempotent], [WithRetryErrorBodyLimit]), [WithOnRetryExhaustion],
+// [WithPrepareRetry], [WithRateLimiter], the observability callbacks ([WithOnRequest],
 // [WithOnResponse], [WithOnRetry]), [WithMaxRequestsBeforeIdleClose],
 // [WithResponseBodyTimeout], [WithMaxResponseBodySize],
 // [WithMaxRequestBodySize], [WithResponseReadLimit], and
@@ -84,13 +87,13 @@
 // [WithTransportBuilder] (or [WithHTTP3TransportBuilder]), [WithProxy], then
 // [WithTransportWrapper].
 //
-// A single request execution overrides the retry knobs, the rate limiter, the
-// attempt timeout, the retry hook, the per-attempt callbacks, the pre-retry
-// hook, the exhaustion handler, the idempotency restriction, the response-body
-// cap, and the drain and snapshot bounds through [RequestOptionFunc] values
-// ([WithRequestRetryMax] and friends) passed to [Client.Do], the convenience
-// methods, or [RequestBuilder.WithOptions]. The request-body cap is
-// client-wide. The client configuration stays untouched.
+// A single request execution overrides the URL parser, the retrier, the rate
+// limiter, the attempt timeout, the retry hook, the per-attempt callbacks, the
+// pre-retry hook, the exhaustion handler, the idempotency restriction, the
+// response-body cap, and the drain and snapshot bounds through
+// [RequestOptionFunc] values ([WithRequestURLParser] and friends) passed to
+// [Client.Do], the convenience methods, or [RequestBuilder.WithOptions]. The
+// request-body cap is client-wide. The client configuration stays untouched.
 //
 // The rate limiter registered with [WithRateLimiter], or overridden for one
 // request with [WithRequestRateLimiter], is any value whose Wait method honors
@@ -101,21 +104,41 @@
 // resend belongs to the same attempt and does not wait again. A wait error
 // stops the execution before the attempt.
 //
+// The retry engine registered with [WithRetrier], or overridden for one request
+// with [WithRequestRetrier], is any value with a Retry method — for example an
+// adapter around github.com/hueristiq/hq-lib-retrier-go built with
+// [RetrierFunc]. The engine owns the attempt count, waits, and backoff; the
+// client supplies the operation and the HTTP-specific hooks in
+// [RetrierOptions], including the retryable-error predicate, the retry
+// notification, and the parsed Retry-After wait. No module dependency is
+// imposed. With no retrier, every execution makes a single attempt.
+//
+// The URL parser registered with [WithURLParser], or overridden for one request
+// with [WithRequestURLParser], is any value with a Parse method returning a
+// *[net/url.URL] — for example an adapter around
+// github.com/hueristiq/hq-lib-url-go/parser built with
+// [github.com/hueristiq/hq-lib-http-go/request.URLParserFunc]. The default is
+// [net/url.Parse], which applies no default scheme and repairs no invalid
+// percent escapes; a custom parser can add either behavior. No module
+// dependency is imposed.
+//
 // # Retries
 //
-// The retry engine is [github.com/hueristiq/hq-lib-retrier-go]: attempts are
-// bounded by [WithRetryMax], delayed by the [WithRetryBackoff] strategy
-// between [WithRetryWaitMin] and [WithRetryWaitMax]. After each attempt the
-// [RetryPolicy] sees the attempt request, the response, the error, and the
-// 1-based attempt number, so policies can react to status codes and method
-// idempotency; [DefaultRetryPolicy] retries connection and transport errors,
-// 408, 429, and 5xx responses (except 501), and never retries a canceled
-// context, a response paired with an error (such as a redirect-policy abort),
-// an exhausted redirect limit, an unsupported scheme, a TLS certificate
-// verification failure, or a permanent DNS failure such as NXDOMAIN. A
-// Retry-After header on a retried response is honored as the wait before the
-// next attempt, capped at the maximum retry wait. [WithOnRetry] reports each
-// approved retry with its attempt, response, error, duration, and computed
+// Retries run only through the configured [Retrier]. The retry policy decides
+// after each attempt whether another is worthwhile; the engine decides how many
+// attempts to make and how long to wait. After each attempt the [RetryPolicy]
+// sees the attempt request, the response, the error, and the 1-based attempt
+// number, so policies can react to status codes and method idempotency;
+// [DefaultRetryPolicy] retries connection and transport errors, 408, 429, and
+// 5xx responses (except 501), and never retries a canceled context, a response
+// paired with an error (such as a redirect-policy abort), an exhausted redirect
+// limit, an unsupported scheme, a TLS certificate verification failure, or a
+// permanent DNS failure such as NXDOMAIN.
+//
+// A Retry-After header on a retried response is parsed and exposed to the
+// engine through [RetrierOptions.RetryAfter]; the documented adapter prefers it
+// over its backoff, capped at the engine's maximum wait. [WithOnRetry] reports
+// each approved retry with its attempt, response, error, duration, and computed
 // wait. [WithPrepareRetry] runs after the wait and before the next attempt, so
 // a caller can re-sign a request; returning an error stops the execution.
 //
@@ -130,16 +153,15 @@
 // replayed stops the execution with the last outcome instead of another
 // attempt: [Client.Do] returns a [RetryError] built from the response that
 // could not be retried, and the error matches [ErrBodyNotReplayable] with
-// errors.Is. When retries are exhausted, [Client.Do] returns a [RetryError]
-// carrying the attempt count, the attempt history, the last status and
-// headers, and the last failure; it matches [ErrRetriesExhausted] with
-// errors.Is, except for the final, non-replayed outcome above. A bounded copy
-// of the final response body is included only when capture is enabled with
-// [WithRetryErrorBodyLimit]; a read error from that capture is reported in
-// [RetryError.BodyErr]. [WithRetryMax] with zero disables additional attempts
-// but not this classification, so a persistent 429 or 5xx still produces a
-// [RetryError]. [WithOnRetryExhaustion] replaces that default and can hand the
-// final response, body open, to the caller.
+// errors.Is. When the engine stops, [Client.Do] returns a [RetryError] carrying
+// the attempt count, the attempt history, the last status and headers, and the
+// last failure; it matches [ErrRetriesExhausted] with errors.Is, except for the
+// final, non-replayed outcome above. A bounded copy of the final response body
+// is included only when capture is enabled with [WithRetryErrorBodyLimit]; a
+// read error from that capture is reported in [RetryError.BodyErr]. With no
+// retrier, the single attempt still classifies this way, so a persistent 429 or
+// 5xx produces a [RetryError]. [WithOnRetryExhaustion] replaces that default
+// and can hand the final response, body open, to the caller.
 //
 // # HTTP protocols
 //
@@ -199,10 +221,10 @@
 // the shared default client.
 //
 // [Client.Do] applies the client's default headers and uses the request URL as
-// given. Invalid percent escapes are repaired by the URL parser (a lone "%"
-// becomes "%25"), while valid escapes and raw query text are preserved. It
-// copies the request and its header map, so the caller's request is not
-// mutated.
+// given. [RequestBuilder] parses URLs with the configured parser — [net/url.Parse]
+// by default — and keeps the parsed URL, including valid percent escapes and raw
+// query text. It copies the request and its header map, so the caller's request
+// is not mutated.
 //
 // # Concurrency
 //
@@ -235,8 +257,8 @@
 // use the standard library; HTTP/3 uses quic-go.
 //
 // The implementation relies on the Go standard library, plus
-// github.com/hueristiq/hq-lib-url-go (URL parsing with scheme defaulting),
-// github.com/hueristiq/hq-lib-retrier-go (the retry engine),
-// github.com/quic-go/quic-go/http3 (HTTP/3), and golang.org/x/net/html/charset
-// (UTF-8 conversion).
+// github.com/quic-go/quic-go/http3 (HTTP/3) and
+// golang.org/x/net/html/charset (UTF-8 conversion). URL parsers, retry engines,
+// and rate limiters are injected by the application, so no dependency on their
+// modules is imposed.
 package http

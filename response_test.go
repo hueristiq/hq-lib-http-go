@@ -141,7 +141,7 @@ func TestResponse_StatusClassification(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(0))
+	client := hqgohttp.New()
 
 	tests := []struct {
 		code                int
@@ -195,7 +195,7 @@ func TestResponse_Non2xxIsNotAnError(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New(hqgohttp.WithRetryMax(0)).Get(server.URL)
+	res, err := hqgohttp.New().Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)

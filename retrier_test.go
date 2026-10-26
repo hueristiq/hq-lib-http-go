@@ -22,6 +22,264 @@ import (
 	hqgohttpstatus "github.com/hueristiq/hq-lib-http-go/status"
 )
 
+// testRetrier is a minimal retry engine implementing [hqgohttp.Retrier]. It
+// retries errors approved by options.RetryOn, sleeps for a configurable wait,
+// and optionally honors options.RetryAfter.
+//
+// Fields:
+//   - maxAttempts (int): maximum attempts; non-positive means 3.
+//   - wait (time.Duration): delay between attempts; non-positive means 1 ms.
+//   - honorRetryAfter (bool): whether to prefer the parsed Retry-After wait.
+type testRetrier struct {
+	maxAttempts     int
+	wait            time.Duration
+	honorRetryAfter bool
+}
+
+// Retry implements [hqgohttp.Retrier].
+func (r testRetrier) Retry(ctx context.Context, operation hqgohttp.RetryOperation, options hqgohttp.RetrierOptions) (res *http.Response, err error) {
+	maxAttempts := r.maxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	wait := r.wait
+
+	for attempt := 1; ; attempt++ {
+		if cause := context.Cause(ctx); cause != nil {
+			return res, cause
+		}
+
+		res, err = operation()
+		if err == nil {
+			return res, nil
+		}
+
+		if options.RetryOn != nil && !options.RetryOn(err) {
+			return res, err
+		}
+
+		if attempt >= maxAttempts {
+			return res, err
+		}
+
+		if r.honorRetryAfter {
+			if retryAfter, ok := options.RetryAfter(); ok {
+				wait = retryAfter
+			}
+		}
+
+		if wait <= 0 {
+			wait = time.Millisecond
+		}
+
+		if options.OnRetry != nil {
+			options.OnRetry(hqgohttp.RetrierEvent{Attempt: attempt, Err: err, Wait: wait})
+		}
+
+		timer := time.NewTimer(wait)
+
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+
+			return res, context.Cause(ctx)
+		}
+	}
+}
+
+func TestRetrierFunc(t *testing.T) {
+	t.Parallel()
+
+	var _ hqgohttp.Retrier = hqgohttp.RetrierFunc(nil)
+
+	type contextKey struct{}
+
+	ctx := context.WithValue(t.Context(), contextKey{}, "marker")
+
+	wantRes := &http.Response{StatusCode: http.StatusTeapot, Body: http.NoBody}
+	wantErr := errors.New("retrier failed")
+
+	var gotValue any
+
+	retrier := hqgohttp.RetrierFunc(func(gotCtx context.Context, operation hqgohttp.RetryOperation, _ hqgohttp.RetrierOptions) (*http.Response, error) {
+		gotValue = gotCtx.Value(contextKey{})
+
+		res, err := operation()
+		require.NoError(t, err)
+		assert.Same(t, wantRes, res)
+
+		return wantRes, wantErr
+	})
+
+	res, err := retrier.Retry(ctx, func() (*http.Response, error) { //nolint:bodyclose // The sentinel response carries http.NoBody.
+		return wantRes, nil
+	}, hqgohttp.RetrierOptions{})
+
+	require.ErrorIs(t, err, wantErr)
+	assert.Same(t, wantRes, res)
+	assert.Equal(t, "marker", gotValue, "Expected the retrier to receive the execution context")
+}
+
+func TestClient_NoRetrierMakesSingleAttempt(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+
+	t.Cleanup(server.Close)
+
+	res, err := hqgohttp.New().Get(server.URL)
+
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Equal(t, int32(1), attempts.Load(), "Expected a single attempt without a retrier")
+
+	var retryErr *hqgohttp.RetryError
+
+	require.ErrorAs(t, err, &retryErr)
+	assert.Equal(t, 1, retryErr.Attempts, "Expected the single attempt to be classified as a RetryError")
+}
+
+func TestClient_WithRetrier(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+
+			return
+		}
+
+		_, _ = w.Write([]byte("recovered"))
+	}))
+
+	t.Cleanup(server.Close)
+
+	client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}))
+
+	res, err := client.Get(server.URL)
+
+	require.NoError(t, err)
+	assert.Equal(t, "recovered", readBody(t, res))
+	assert.Equal(t, int32(2), attempts.Load(), "Expected the engine to drive both attempts")
+}
+
+func TestClient_WithRequestRetrier(t *testing.T) {
+	t.Parallel()
+
+	newUnavailableServer := func(t *testing.T) (serverURL string, attempts *atomic.Int32) {
+		t.Helper()
+
+		attempts = &atomic.Int32{}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+
+		t.Cleanup(server.Close)
+
+		serverURL = server.URL
+
+		return
+	}
+
+	t.Run("per-request engine wins", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL, attempts := newUnavailableServer(t)
+
+		client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 1}))
+
+		res, err := client.Get(serverURL, hqgohttp.WithRequestRetrier(testRetrier{maxAttempts: 3}))
+
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, int32(3), attempts.Load(), "Expected the per-request engine to run three attempts")
+	})
+
+	t.Run("nil disables retries", func(t *testing.T) {
+		t.Parallel()
+
+		serverURL, attempts := newUnavailableServer(t)
+
+		client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}))
+
+		res, err := client.Get(serverURL, hqgohttp.WithRequestRetrier(nil))
+
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, int32(1), attempts.Load(), "Expected a nil per-request retrier to disable retries")
+	})
+}
+
+// retryAfterRetrier records the Retry-After value reported by the client and
+// performs a single attempt.
+type retryAfterRetrier struct {
+	wait time.Duration
+	ok   bool
+}
+
+// Retry implements [hqgohttp.Retrier].
+func (r *retryAfterRetrier) Retry(_ context.Context, operation hqgohttp.RetryOperation, options hqgohttp.RetrierOptions) (res *http.Response, err error) {
+	res, err = operation()
+
+	r.wait, r.ok = options.RetryAfter()
+
+	return res, err
+}
+
+func TestClient_RetrierOptions_RetryAfter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		retryAfter string
+		wantWait   time.Duration
+		wantOK     bool
+	}{
+		{"seconds", "10", 10 * time.Second, true},
+		{"zero", "0", 0, true},
+		{"absent", "", 0, false},
+		{"invalid", "later", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.retryAfter != "" {
+					w.Header().Set("Retry-After", tt.retryAfter)
+				}
+
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+
+			t.Cleanup(server.Close)
+
+			retrier := &retryAfterRetrier{}
+
+			res, err := hqgohttp.New(hqgohttp.WithRetrier(retrier)).Get(server.URL)
+
+			require.Error(t, err)
+			assert.Nil(t, res)
+			assert.Equal(t, tt.wantWait, retrier.wait, "Expected the parsed Retry-After wait")
+			assert.Equal(t, tt.wantOK, retrier.ok, "Expected the header's presence to be reported")
+		})
+	}
+}
+
 func TestDefaultRetryPolicy_ResponseWithErrorIsFinal(t *testing.T) {
 	t.Parallel()
 
@@ -240,8 +498,7 @@ func TestClient_RetryError_RequestBodyLimit(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+	client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithRetryErrorBodyLimit(64),
 	)
 
@@ -281,8 +538,7 @@ func TestClient_RetryError_History(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(2),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
 	)
 
 	res, err := client.Get(server.URL)
@@ -318,9 +574,7 @@ func TestClient_RetryError_TransportFailure(t *testing.T) {
 
 	server.Close()
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
-	)
+	client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}))
 
 	res, err := client.Get(serverURL)
 
@@ -346,9 +600,7 @@ func TestClient_RetryError_NoRetries(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(0),
-	)
+	client := hqgohttp.New()
 
 	res, err := client.Get(server.URL)
 
@@ -373,8 +625,7 @@ func TestClient_RetryError_BodyLimit(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+	client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithRetryErrorBodyLimit(4),
 	)
 
@@ -402,8 +653,7 @@ func TestClient_RetryError(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMax(1),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
+	client := hqgohttp.New(hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
 
@@ -439,10 +689,7 @@ func TestClient_RetryError_BodyDisabledByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMax(0),
-		hqgohttp.WithRetryBackoff(noWaitBackoff),
-	)
+	client := hqgohttp.New()
 
 	res, err := client.Get(server.URL)
 
@@ -485,4 +732,21 @@ func TestRetryError_ErrorAndUnwrap(t *testing.T) {
 	}
 
 	assert.Contains(t, status.Error(), "500 Internal Server Error")
+}
+
+func TestRetrierFunc_Nil(t *testing.T) {
+	t.Parallel()
+
+	var retrier hqgohttp.RetrierFunc
+
+	res, err := retrier.Retry(t.Context(), nil, hqgohttp.RetrierOptions{})
+
+	require.Error(t, err)
+
+	if res != nil {
+		require.NoError(t, res.Body.Close())
+	}
+
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "nil retrier")
 }

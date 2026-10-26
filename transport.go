@@ -39,12 +39,12 @@ func (c *Client) applyClientOptions(client *http.Client) (configured *http.Clien
 		return nil
 	}
 
-	if c.checkRedirectSet {
-		client.CheckRedirect = c.CheckRedirect
+	if c.config.checkRedirectSet {
+		client.CheckRedirect = c.config.CheckRedirect
 	}
 
-	if c.cookieJarSet {
-		client.Jar = c.CookieJar
+	if c.config.cookieJarSet {
+		client.Jar = c.config.CookieJar
 	}
 
 	configured = client
@@ -61,12 +61,12 @@ func (c *Client) applyClientOptions(client *http.Client) (configured *http.Clien
 // Returns:
 //   - configured (http.RoundTripper): the same transport.
 func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundTripper) {
-	if c.Proxy == nil {
+	if c.config.Proxy == nil {
 		return transport
 	}
 
 	if httpTransport, ok := transport.(*http.Transport); ok {
-		httpTransport.Proxy = c.Proxy
+		httpTransport.Proxy = c.config.Proxy
 	}
 
 	configured = transport
@@ -83,11 +83,11 @@ func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundT
 // Returns:
 //   - wrapped (http.RoundTripper): the wrapped transport.
 func (c *Client) applyTransportWrapper(transport http.RoundTripper) (wrapped http.RoundTripper) {
-	if c.TransportWrapper == nil {
+	if c.config.TransportWrapper == nil {
 		return transport
 	}
 
-	wrapped = c.TransportWrapper(transport)
+	wrapped = c.config.TransportWrapper(transport)
 	if wrapped == nil {
 		wrapped = transport
 	}
@@ -113,16 +113,16 @@ func (c *Client) configureBuiltTransport(protocol Protocol, transport http.Round
 		return configured
 	}
 
-	if c.DialContext != nil {
-		httpTransport.DialContext = c.DialContext
+	if c.config.DialContext != nil {
+		httpTransport.DialContext = c.config.DialContext
 	}
 
-	if c.tlsHandshakeTimeoutSet {
-		httpTransport.TLSHandshakeTimeout = c.TLSHandshakeTimeout
+	if c.config.tlsHandshakeTimeoutSet {
+		httpTransport.TLSHandshakeTimeout = c.config.TLSHandshakeTimeout
 	}
 
-	if c.TransportBuilder != nil {
-		if built := c.TransportBuilder(protocol, httpTransport); built != nil {
+	if c.config.TransportBuilder != nil {
+		if built := c.config.TransportBuilder(protocol, httpTransport); built != nil {
 			configured = built
 		}
 	}
@@ -140,7 +140,7 @@ func (c *Client) configureBuiltTransport(protocol Protocol, transport http.Round
 // Returns:
 //   - configured (http.RoundTripper): the configured transport.
 func (c *Client) configureHTTP3Transport(transport http.RoundTripper) (configured http.RoundTripper) {
-	if c.HTTP3TransportBuilder == nil {
+	if c.config.HTTP3TransportBuilder == nil {
 		return transport
 	}
 
@@ -149,7 +149,7 @@ func (c *Client) configureHTTP3Transport(transport http.RoundTripper) (configure
 		return transport
 	}
 
-	if built := c.HTTP3TransportBuilder(h3Transport); built != nil {
+	if built := c.config.HTTP3TransportBuilder(h3Transport); built != nil {
 		return built
 	}
 
@@ -167,8 +167,8 @@ func (c *Client) configureHTTP3Transport(transport http.RoundTripper) (configure
 // Returns:
 //   - configured (http.RoundTripper): the configured transport.
 func (c *Client) configureTransport(protocol Protocol, transport http.RoundTripper) (configured http.RoundTripper) {
-	if c.Transport != nil {
-		return c.Transport
+	if c.config.Transport != nil {
+		return c.config.Transport
 	}
 
 	transport = c.configureBuiltTransport(protocol, transport)
@@ -189,8 +189,8 @@ func (c *Client) configureTransport(protocol Protocol, transport http.RoundTripp
 //   - proxyURL (*url.URL): the proxy to use, or nil.
 //   - err (error): non-nil when the selector or the environment is invalid.
 func (c *Client) proxyFor(req *http.Request) (proxyURL *url.URL, err error) {
-	if c.Proxy != nil {
-		proxyURL, err = c.Proxy(req)
+	if c.config.Proxy != nil {
+		proxyURL, err = c.config.Proxy(req)
 
 		return proxyURL, err
 	}
@@ -206,7 +206,7 @@ func (c *Client) proxyFor(req *http.Request) (proxyURL *url.URL, err error) {
 // Returns:
 //   - client (*http.Client): the configured client.
 func (c *Client) buildAutoClient() (client *http.Client) {
-	client = newAutoHTTPClient(c.TLSConfig)
+	client = newAutoHTTPClient(c.config.TLSConfig)
 	client.Transport = c.configureTransport(ProtocolAuto, client.Transport)
 	c.applyClientOptions(client)
 
@@ -220,10 +220,10 @@ func (c *Client) buildAutoClient() (client *http.Client) {
 //   - primary (*http.Client): the auto-negotiating client.
 //   - fallback (*http.Client): the h2c fallback client.
 func (c *Client) buildAutoClients() (primary, fallback *http.Client) {
-	primary = newAutoHTTPClient(c.TLSConfig)
+	primary = newAutoHTTPClient(c.config.TLSConfig)
 
-	if c.Transport != nil {
-		primary.Transport = c.Transport
+	if c.config.Transport != nil {
+		primary.Transport = c.config.Transport
 	} else {
 		primary.Transport = c.configureBuiltTransport(ProtocolAuto, primary.Transport)
 		primary.Transport = c.applyProxy(primary.Transport)
@@ -231,9 +231,9 @@ func (c *Client) buildAutoClients() (primary, fallback *http.Client) {
 
 	c.applyClientOptions(primary)
 
-	fallback = newFallbackClient(primary, c.TLSConfig)
+	fallback = newFallbackClient(primary, c.config.TLSConfig)
 
-	if c.Transport == nil {
+	if c.config.Transport == nil {
 		primary.Transport = c.applyTransportWrapper(primary.Transport)
 		fallback.Transport = c.applyTransportWrapper(fallback.Transport)
 	}

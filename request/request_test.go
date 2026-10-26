@@ -7,8 +7,10 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -247,10 +249,23 @@ func TestNew(t *testing.T) {
 		require.Nil(t, req)
 	})
 
-	t.Run("scheme defaulting", func(t *testing.T) {
+	t.Run("scheme-less URL fails without a parser", func(t *testing.T) {
 		t.Parallel()
 
 		req, err := hqgohttprequest.New(t.Context(), "GET", "example.com/path", nil)
+
+		require.Error(t, err)
+		assert.Nil(t, req)
+	})
+
+	t.Run("scheme defaulting with a custom parser", func(t *testing.T) {
+		t.Parallel()
+
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse("http://" + raw)
+		})
+
+		req, err := hqgohttprequest.New(t.Context(), "GET", "example.com/path", nil, hqgohttprequest.WithURLParser(parser))
 
 		require.NoError(t, err)
 		require.NotNil(t, req)
@@ -269,15 +284,68 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestNew_ReusableBodyIsCloned(t *testing.T) {
+	t.Parallel()
+
+	source, err := hqgohttprequest.NewReusableReadCloser("hello world")
+
+	require.NoError(t, err)
+
+	first, err := hqgohttprequest.New(t.Context(), "POST", "http://example.com/first", source)
+
+	require.NoError(t, err)
+
+	second, err := hqgohttprequest.New(t.Context(), "POST", "http://example.com/second", source)
+
+	require.NoError(t, err)
+
+	firstBody, err := io.ReadAll(first.Body)
+
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", string(firstBody))
+	assert.Equal(t, int64(len("hello world")), first.ContentLength)
+
+	secondBody, err := io.ReadAll(second.Body)
+
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", string(secondBody))
+	assert.Equal(t, int64(len("hello world")), second.ContentLength)
+
+	sourceBody, err := io.ReadAll(source)
+
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", string(sourceBody),
+		"Expected the source cursor to be untouched")
+
+	_, err = hqgohttprequest.NewLimited(t.Context(), "POST", "http://example.com/limited", source, 4)
+
+	require.ErrorIs(t, err, hqgohttprequest.ErrBodyTooLarge)
+}
+
 func TestNew_MalformedURLs(t *testing.T) {
 	t.Parallel()
 
-	t.Run("invalid percent escape", func(t *testing.T) {
+	t.Run("invalid percent escape fails without a lenient parser", func(t *testing.T) {
 		t.Parallel()
 
 		const rawURL = "https://scanme.sh/%invalid"
 
 		req, err := hqgohttprequest.New(t.Context(), "GET", rawURL, nil)
+
+		require.Error(t, err)
+		assert.Nil(t, req)
+	})
+
+	t.Run("invalid percent escape repaired by a custom parser", func(t *testing.T) {
+		t.Parallel()
+
+		const rawURL = "https://scanme.sh/%invalid"
+
+		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
+			return url.Parse(strings.ReplaceAll(raw, "%invalid", "%25invalid"))
+		})
+
+		req, err := hqgohttprequest.New(t.Context(), "GET", rawURL, nil, hqgohttprequest.WithURLParser(parser))
 
 		require.NoError(t, err)
 		require.NotNil(t, req)
@@ -302,17 +370,17 @@ func TestNew_MalformedURLs(t *testing.T) {
 		assert.Equal(t, "/w%0d%2e/", req.URL.EscapedPath())
 	})
 
-	t.Run("scheme-less host with raw query", func(t *testing.T) {
+	t.Run("raw query is preserved", func(t *testing.T) {
 		t.Parallel()
 
 		const rawQuery = "some'param=`'+OR+ORDER+BY+1--"
 
-		req, err := hqgohttprequest.New(t.Context(), "GET", "scanme.sh/with/path?"+rawQuery, nil)
+		req, err := hqgohttprequest.New(t.Context(), "GET", "https://scanme.sh/with/path?"+rawQuery, nil)
 
 		require.NoError(t, err)
 		require.NotNil(t, req)
 
-		assert.Equal(t, "http", req.URL.Scheme)
+		assert.Equal(t, "https", req.URL.Scheme)
 		assert.Equal(t, "scanme.sh", req.URL.Host)
 		assert.Equal(t, "/with/path", req.URL.Path)
 		assert.Equal(t, rawQuery, req.URL.RawQuery)
@@ -653,4 +721,115 @@ func TestRequest_Std(t *testing.T) {
 	var nilReq *hqgohttprequest.Request
 
 	assert.Nil(t, nilReq.Std())
+}
+
+// closeTrackingReader records whether it has been closed.
+type closeTrackingReader struct {
+	io.Reader
+	closed bool
+}
+
+// Close marks the reader closed.
+func (r *closeTrackingReader) Close() error {
+	r.closed = true
+
+	return nil
+}
+
+func TestNewReusableReadCloserLimited_ClosesReader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &closeTrackingReader{Reader: strings.NewReader("payload")}
+
+		_, err := hqgohttprequest.NewReusableReadCloserLimited(reader, 0)
+
+		require.NoError(t, err)
+		assert.True(t, reader.closed, "Expected the reader to be closed")
+	})
+
+	t.Run("read error", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &closeTrackingReader{Reader: iotest.ErrReader(errors.New("read failed"))}
+
+		_, err := hqgohttprequest.NewReusableReadCloserLimited(reader, 0)
+
+		require.Error(t, err)
+		assert.True(t, reader.closed, "Expected the reader to be closed")
+	})
+
+	t.Run("limit exceeded", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &closeTrackingReader{Reader: strings.NewReader("0123456789")}
+
+		_, err := hqgohttprequest.NewReusableReadCloserLimited(reader, 4)
+
+		require.ErrorIs(t, err, hqgohttprequest.ErrBodyTooLarge)
+		assert.True(t, reader.closed, "Expected the reader to be closed")
+	})
+}
+
+// nilImplementingReader is a reader whose zero value is a typed nil.
+type nilImplementingReader struct{}
+
+func (*nilImplementingReader) Read([]byte) (int, error) {
+	panic("Read must not be called on a typed-nil reader")
+}
+
+func TestNewReusableReadCloserLimited_TypedNil(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body any
+	}{
+		{name: "bytes reader", body: (*bytes.Reader)(nil)},
+		{name: "strings reader", body: (*strings.Reader)(nil)},
+		{name: "section reader", body: (*io.SectionReader)(nil)},
+		{name: "reader interface", body: (*nilImplementingReader)(nil)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			reader, err := hqgohttprequest.NewReusableReadCloserLimited(test.body, 0)
+
+			require.NoError(t, err)
+			require.NotNil(t, reader)
+
+			data, err := io.ReadAll(reader)
+
+			require.NoError(t, err)
+			assert.Empty(t, data)
+		})
+	}
+}
+
+func TestNew_NilBodyFunc(t *testing.T) {
+	t.Parallel()
+
+	var bodyFunc func() (io.Reader, error)
+
+	req, err := hqgohttprequest.New(t.Context(), "POST", "https://example.com", bodyFunc)
+
+	require.NoError(t, err)
+	assert.Nil(t, req.Body)
+}
+
+func TestNew_NilParserResult(t *testing.T) {
+	t.Parallel()
+
+	parser := hqgohttprequest.URLParserFunc(func(string) (*url.URL, error) {
+		return nil, nil //nolint:nilnil // The test deliberately exercises a nil parser result.
+	})
+
+	req, err := hqgohttprequest.New(t.Context(), "GET", "https://example.com", nil, hqgohttprequest.WithURLParser(parser))
+
+	require.Error(t, err)
+	assert.Nil(t, req)
 }

@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -17,7 +19,6 @@ import (
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 	hqgohttpmime "github.com/hueristiq/hq-lib-http-go/mime"
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
-	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
 
 // RequestOptions holds the per-request overrides of the execution knobs of a
@@ -34,12 +35,11 @@ import (
 //     helpers. Zero means unlimited.
 //   - MaxRequestBodySize (int64): the cap on bytes buffered into a request body.
 //     Zero means unlimited.
-//   - MaxRetries (int): the number of retries after the initial attempt.
-//   - RetryWaitMin (time.Duration): the minimum delay between attempts.
-//   - RetryWaitMax (time.Duration): the maximum delay between attempts, also
-//     capping an honored Retry-After wait.
-//   - NewRetryBackoff (func(minDelay, maxDelay time.Duration) (backoff Backoff)):
-//     the constructor for the strategy computing the delay per attempt.
+//   - URLParser (hqgohttprequest.URLParser): the parser turning a raw URL into
+//     an absolute URL when [RequestBuilder] builds the request. Nil selects
+//     [net/url.Parse].
+//   - Retrier (Retrier): the engine running the execution's attempts. Nil makes
+//     a single attempt.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
 //     retry.
 //   - RateLimiter (RateLimiter): the limiter waited on before every attempt.
@@ -59,10 +59,8 @@ type RequestOptions struct {
 	AttemptTimeout         time.Duration
 	MaxResponseBodySize    int64
 	MaxRequestBodySize     int64
-	MaxRetries             int
-	RetryWaitMin           time.Duration
-	RetryWaitMax           time.Duration
-	NewRetryBackoff        func(minDelay, maxDelay time.Duration) (backoff Backoff)
+	URLParser              hqgohttprequest.URLParser
+	Retrier                Retrier
 	RetryPolicy            RetryPolicy
 	RateLimiter            RateLimiter
 	OnRequest              OnRequestFunc
@@ -81,16 +79,6 @@ type RequestOptions struct {
 func (opts *RequestOptions) normalize() {
 	if opts.AttemptTimeout < 0 {
 		opts.AttemptTimeout = 0
-	}
-
-	if opts.MaxRetries < 0 {
-		opts.MaxRetries = DefaultRetryMax
-	}
-
-	normalizeRetryBounds(&opts.RetryWaitMin, &opts.RetryWaitMax)
-
-	if opts.NewRetryBackoff == nil {
-		opts.NewRetryBackoff = hqgoretrierbackoff.ExponentialWithDecorrelatedJitter
 	}
 
 	if opts.RetryPolicy == nil {
@@ -149,23 +137,21 @@ type headerOp struct {
 //   - opts (*RequestOptions): the resolved, normalized configuration.
 func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *RequestOptions) {
 	opts = &RequestOptions{
-		AttemptTimeout:         c.AttemptTimeout,
-		MaxResponseBodySize:    c.MaxResponseBodySize,
-		MaxRequestBodySize:     c.MaxRequestBodySize,
-		MaxRetries:             c.MaxRetries,
-		RetryWaitMin:           c.RetryWaitMin,
-		RetryWaitMax:           c.RetryWaitMax,
-		NewRetryBackoff:        c.NewRetryBackoff,
-		RetryPolicy:            c.RetryPolicy,
-		RateLimiter:            c.RateLimiter,
-		OnRequest:              c.OnRequest,
-		OnResponse:             c.OnResponse,
-		OnRetry:                c.OnRetry,
-		PrepareRetry:           c.PrepareRetry,
-		RetryExhaustionHandler: c.RetryExhaustionHandler,
-		IdempotentRetries:      c.IdempotentRetries,
-		ResponseReadLimit:      c.ResponseReadLimit,
-		RetryErrorBodyLimit:    c.RetryErrorBodyLimit,
+		AttemptTimeout:         c.config.AttemptTimeout,
+		MaxResponseBodySize:    c.config.MaxResponseBodySize,
+		MaxRequestBodySize:     c.config.MaxRequestBodySize,
+		URLParser:              c.config.URLParser,
+		Retrier:                c.config.Retrier,
+		RetryPolicy:            c.config.RetryPolicy,
+		RateLimiter:            c.config.RateLimiter,
+		OnRequest:              c.config.OnRequest,
+		OnResponse:             c.config.OnResponse,
+		OnRetry:                c.config.OnRetry,
+		PrepareRetry:           c.config.PrepareRetry,
+		RetryExhaustionHandler: c.config.RetryExhaustionHandler,
+		IdempotentRetries:      c.config.IdempotentRetries,
+		ResponseReadLimit:      c.config.ResponseReadLimit,
+		RetryErrorBodyLimit:    c.config.RetryErrorBodyLimit,
 	}
 
 	for _, of := range ofs {
@@ -207,8 +193,9 @@ func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *RequestOptions)
 //   - bodyStream (io.Reader): the streaming body source set by
 //     [RequestBuilder.BodyStream], or nil.
 //   - bodyStreamSize (int64): the streaming body length, or -1 when unknown.
-//   - ctx (context.Context): the default execution context, used when Do is
-//     called with a nil context.
+//   - ctx (context.Context): the per-request execution context.
+//   - ctxSet (bool): whether [RequestBuilder.Context] was called, so an
+//     explicit nil or [context.Background] value overrides the client default.
 //   - requestOptions ([]RequestOptionFunc): per-request overrides of the
 //     execution knobs.
 type RequestBuilder struct {
@@ -223,6 +210,7 @@ type RequestBuilder struct {
 	bodyStream     io.Reader
 	bodyStreamSize int64
 	ctx            context.Context //nolint:containedctx // Context stores a per-request context by design.
+	ctxSet         bool
 	requestOptions []RequestOptionFunc
 }
 
@@ -239,10 +227,11 @@ func (b *RequestBuilder) Method(method hqgohttpmethod.Method) (builder *RequestB
 	return b
 }
 
-// URL sets the request URL. It is parsed and used as given: a URL carrying a
-// URI scheme, a host:port authority, or a scheme-less host such as
-// "example.com/path" (which defaults to http). A bare relative path has no
-// host and is rejected when the request is built.
+// URL sets the request URL. It is parsed with the configured URL parser and
+// used as given. The default [net/url.Parse] requires an absolute, correctly
+// escaped URL with a scheme and a host; a custom parser can add a default
+// scheme, repair escapes, or apply another transformation. A bare relative path
+// has no host and is rejected when the request is built.
 //
 // Parameters:
 //   - rawURL (string): the request URL.
@@ -308,7 +297,9 @@ func (b *RequestBuilder) AddHeader(key, value string) (builder *RequestBuilder) 
 // string, a []byte, an io.Reader, an io.ReadSeeker, a *bytes.Buffer, a
 // func() (io.Reader, error), or a *ReusableReadCloser. A reader is buffered
 // when Body is called, so every retry attempt and every later Do resends it in
-// full. A read error from the reader is reported by Do.
+// full. Buffering is bounded by [WithMaxRequestBodySize], and a reader that
+// implements io.Closer is closed once it has been consumed. A read or size
+// error from the reader is reported by Do.
 //
 // Parameters:
 //   - body (any): the request payload; nil means no body.
@@ -331,7 +322,7 @@ func (b *RequestBuilder) Body(body any) (builder *RequestBuilder) {
 		return b
 	}
 
-	reusable, err := hqgohttprequest.NewReusableReadCloser(body)
+	reusable, err := hqgohttprequest.NewReusableReadCloserLimited(body, b.client.config.MaxRequestBodySize)
 	if err != nil {
 		b.body = nil
 		b.bodyErr = err
@@ -387,8 +378,8 @@ func (b *RequestBuilder) JSON(value any) (builder *RequestBuilder) {
 	b.bodyErr = nil
 	b.bodyStream = nil
 	b.bodyStreamSize = 0
-	b.bodyEncoder = func(_ int64) (data []byte, contentType string, err error) {
-		data, err = json.Marshal(value)
+	b.bodyEncoder = func(limit int64) (data []byte, contentType string, err error) {
+		data, err = encodeJSON(value, limit)
 		contentType = hqgohttpmime.JSON.String()
 
 		return data, contentType, err
@@ -413,8 +404,8 @@ func (b *RequestBuilder) XML(value any) (builder *RequestBuilder) {
 	b.bodyErr = nil
 	b.bodyStream = nil
 	b.bodyStreamSize = 0
-	b.bodyEncoder = func(_ int64) (data []byte, contentType string, err error) {
-		data, err = xml.Marshal(value)
+	b.bodyEncoder = func(limit int64) (data []byte, contentType string, err error) {
+		data, err = encodeXML(value, limit)
 		contentType = hqgohttpmime.XML.String()
 
 		return data, contentType, err
@@ -474,7 +465,8 @@ func (b *RequestBuilder) Multipart(form *MultipartForm) (builder *RequestBuilder
 }
 
 // Context sets the execution context. Do uses this value; nil means
-// [context.Background]. It overrides a client default set with [WithContext].
+// [context.Background]. An explicit value, including nil or
+// [context.Background], overrides a client default set with [WithContext].
 //
 // Parameters:
 //   - ctx (context.Context): the execution context.
@@ -483,8 +475,28 @@ func (b *RequestBuilder) Multipart(form *MultipartForm) (builder *RequestBuilder
 //   - builder (*RequestBuilder): the receiver, for chaining.
 func (b *RequestBuilder) Context(ctx context.Context) (builder *RequestBuilder) {
 	b.ctx = ctx
+	b.ctxSet = true
 
 	return b
+}
+
+// resolvedContext returns the context to build the request with. An unset
+// builder context yields nil, which lets the request package leave the context
+// untouched so the client default applies. An explicitly set nil is treated as
+// [context.Background].
+//
+// Returns:
+//   - ctx (context.Context): the resolved context, or nil when unset.
+func (b *RequestBuilder) resolvedContext() (ctx context.Context) {
+	if !b.ctxSet {
+		return nil
+	}
+
+	if b.ctx == nil {
+		return context.Background()
+	}
+
+	return b.ctx
 }
 
 // Do builds the request and executes it through the client. See [Client.Do]
@@ -496,19 +508,20 @@ func (b *RequestBuilder) Context(ctx context.Context) (builder *RequestBuilder) 
 //     body.
 //   - err (error): non-nil when building or executing the request fails.
 func (b *RequestBuilder) Do() (res *Response, err error) {
-	req, err := b.build(b.ctx)
+	opts := b.client.requestOptions(b.requestOptions...)
+
+	req, err := b.buildWithParser(b.resolvedContext(), opts.URLParser)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err = b.client.Do(req, b.requestOptions...)
+	res, err = b.client.doWrapped(req, opts)
 
 	return res, err
 }
 
-// build assembles the request: it resolves the method, merges the query
-// parameters, applies the client's default headers (including the default
-// User-Agent), then the request's own headers.
+// build assembles the request with the parser resolved from the client and the
+// request options.
 //
 // Parameters:
 //   - ctx (context.Context): the context the request is built with.
@@ -519,6 +532,25 @@ func (b *RequestBuilder) Do() (res *Response, err error) {
 //   - err (error): non-nil when the URL is missing or invalid or the request
 //     cannot be constructed.
 func (b *RequestBuilder) build(ctx context.Context) (req *hqgohttprequest.Request, err error) {
+	return b.buildWithParser(ctx, b.client.requestOptions(b.requestOptions...).URLParser)
+}
+
+// buildWithParser assembles the request: it parses the URL with parser,
+// resolves the method, merges the query parameters, applies the client's
+// default headers (including the default User-Agent), then the request's own
+// headers.
+//
+// Parameters:
+//   - ctx (context.Context): the context the request is built with.
+//   - parser (hqgohttprequest.URLParser): the parser turning the raw URL into
+//     an absolute URL.
+//
+// Returns:
+//   - req (*hqgohttprequest.Request): the built request, with a reusable
+//     body.
+//   - err (error): non-nil when the URL is missing or invalid or the request
+//     cannot be constructed.
+func (b *RequestBuilder) buildWithParser(ctx context.Context, parser hqgohttprequest.URLParser) (req *hqgohttprequest.Request, err error) {
 	if b.bodyStream != nil {
 		defer func() {
 			if err != nil {
@@ -552,7 +584,7 @@ func (b *RequestBuilder) build(ctx context.Context) (req *hqgohttprequest.Reques
 	var contentType string
 
 	if b.bodyEncoder != nil {
-		limit := b.client.MaxRequestBodySize
+		limit := b.client.config.MaxRequestBodySize
 
 		data, encodedContentType, encodeErr := b.bodyEncoder(limit)
 		if encodeErr != nil {
@@ -572,15 +604,15 @@ func (b *RequestBuilder) build(ctx context.Context) (req *hqgohttprequest.Reques
 	}
 
 	if b.bodyStream != nil {
-		if limit := b.client.MaxRequestBodySize; limit > 0 && b.bodyStreamSize > limit {
+		if limit := b.client.config.MaxRequestBodySize; limit > 0 && b.bodyStreamSize > limit {
 			err = fmt.Errorf("http.RequestBuilder.Do: %w (limit %d bytes)", ErrRequestBodyTooLarge, limit)
 
 			return nil, err
 		}
 
-		req, err = hqgohttprequest.NewStream(ctx, method.String(), rawURL, b.bodyStream, b.bodyStreamSize)
+		req, err = hqgohttprequest.NewStream(ctx, method.String(), rawURL, b.bodyStream, b.bodyStreamSize, hqgohttprequest.WithURLParser(parser))
 	} else {
-		req, err = hqgohttprequest.NewLimited(ctx, method.String(), rawURL, body, b.client.MaxRequestBodySize)
+		req, err = hqgohttprequest.NewLimited(ctx, method.String(), rawURL, body, b.client.config.MaxRequestBodySize, hqgohttprequest.WithURLParser(parser))
 	}
 
 	if err != nil {
@@ -606,7 +638,7 @@ func (b *RequestBuilder) build(ctx context.Context) (req *hqgohttprequest.Reques
 		}
 	}
 
-	for _, h := range b.client.Headers {
+	for _, h := range b.client.config.Headers {
 		if b.setsHeader(h.Key) {
 			continue
 		}
@@ -734,8 +766,8 @@ func hasHeader(header http.Header, key string) (found bool) {
 // request body.
 //
 // Fields retain insertion order. The encoded body is buffered when the request
-// is built, so retries resend the same bytes; the file readers are consumed at
-// that point, making a form single-use after a build.
+// is built, so retries resend the same bytes; the file readers are consumed and
+// closed at that point, making a form single-use after a build.
 //
 // Fields:
 //   - fields ([]multipartField): the ordered text fields.
@@ -760,7 +792,8 @@ type multipartField struct {
 // Fields:
 //   - Field (string): the form field name carrying the file.
 //   - Filename (string): the filename reported to the server.
-//   - Content (io.Reader): the file content, read when the request is built.
+//   - Content (io.Reader): the file content, read and closed when the request
+//     is built.
 type MultipartFile struct {
 	Field    string
 	Filename string
@@ -782,7 +815,8 @@ func (f *MultipartForm) Field(name, value string) (form *MultipartForm) {
 	return f
 }
 
-// File appends a file part. The content is read when the request is built.
+// File appends a file part. The content is read and closed (when it implements
+// io.Closer) when the request is built.
 //
 // Parameters:
 //   - field (string): the form field name carrying the file.
@@ -832,6 +866,75 @@ func (l *limitWriter) Write(p []byte) (n int, err error) {
 	l.wrote += int64(n)
 
 	return n, err
+}
+
+// encodeJSON marshals value through a limit-aware writer. The JSON encoder
+// appends a newline that json.Marshal does not emit, so the final byte is
+// trimmed; the writer allows one extra byte so a payload exactly at the limit
+// still passes.
+//
+// Parameters:
+//   - value (any): the value to marshal.
+//   - limit (int64): the maximum payload size in bytes; non-positive means
+//     unlimited.
+//
+// Returns:
+//   - data ([]byte): the JSON payload.
+//   - err (error): a marshal error or [ErrRequestBodyTooLarge].
+func encodeJSON(value any, limit int64) (data []byte, err error) {
+	var buffer bytes.Buffer
+
+	var dst io.Writer = &buffer
+	if limit > 0 && limit < math.MaxInt64 {
+		dst = &limitWriter{w: &buffer, limit: limit + 1}
+	}
+
+	if err = json.NewEncoder(dst).Encode(value); err != nil {
+		if errors.Is(err, ErrRequestBodyTooLarge) {
+			return nil, fmt.Errorf("%w (limit %d bytes)", ErrRequestBodyTooLarge, limit)
+		}
+
+		return nil, err
+	}
+
+	data = bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
+
+	if limit > 0 && int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w (limit %d bytes)", ErrRequestBodyTooLarge, limit)
+	}
+
+	return data, nil
+}
+
+// encodeXML marshals value through a limit-aware writer.
+//
+// Parameters:
+//   - value (any): the value to marshal.
+//   - limit (int64): the maximum payload size in bytes; non-positive means
+//     unlimited.
+//
+// Returns:
+//   - data ([]byte): the XML payload.
+//   - err (error): a marshal error or [ErrRequestBodyTooLarge].
+func encodeXML(value any, limit int64) (data []byte, err error) {
+	var buffer bytes.Buffer
+
+	var dst io.Writer = &buffer
+	if limit > 0 {
+		dst = &limitWriter{w: &buffer, limit: limit}
+	}
+
+	encoder := xml.NewEncoder(dst)
+
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+
+	if err := encoder.Flush(); err != nil {
+		return nil, err
+	}
+
+	return buffer.Bytes(), nil
 }
 
 // encode writes the form into a reusable multipart body. A positive limit stops
@@ -890,15 +993,43 @@ func (f *MultipartForm) writeTo(writer *multipart.Writer) (err error) {
 
 		part, err = writer.CreateFormFile(file.Field, file.Filename)
 		if err != nil {
+			closeIfCloser(file.Content)
+
 			return fmt.Errorf("http.MultipartForm: creating file part %q: %w", file.Filename, err)
 		}
 
-		if _, err = io.Copy(part, file.Content); err != nil {
+		if err = copyAndClose(part, file.Content); err != nil {
 			return fmt.Errorf("http.MultipartForm: reading file %q: %w", file.Filename, err)
 		}
 	}
 
 	return nil
+}
+
+// copyAndClose copies src to dst and closes src when it implements io.Closer.
+//
+// Parameters:
+//   - dst (io.Writer): the destination.
+//   - src (io.Reader): the source, closed after the copy when possible.
+//
+// Returns:
+//   - err (error): the copy error, or nil.
+func copyAndClose(dst io.Writer, src io.Reader) (err error) {
+	defer closeIfCloser(src)
+
+	_, err = io.Copy(dst, src)
+
+	return err
+}
+
+// closeIfCloser closes reader when it implements io.Closer.
+//
+// Parameters:
+//   - reader (io.Reader): the value to close when possible.
+func closeIfCloser(reader io.Reader) {
+	if closer, ok := reader.(io.Closer); ok {
+		_ = closer.Close()
+	}
 }
 
 // Stream returns a reader that produces the multipart body as it is consumed,
@@ -972,7 +1103,10 @@ func (f *MultipartForm) Stream() (body io.ReadCloser, contentType string, err er
 
 // StripSensitiveHeadersOnRedirect returns a [http.Client.CheckRedirect]
 // function that removes the given headers when a redirect changes host or
-// downgrades from https to http.
+// downgrades from https to http. Every hop of the redirect chain is considered,
+// not only the previous one: net/http copies the initial request's headers onto
+// each redirect request, so a header stripped on an earlier hop would otherwise
+// return on a later same-host hop.
 //
 // net/http already strips Authorization, WWW-Authenticate, Cookie, and
 // Cookie2 on a host change; this helper covers application-specific
@@ -980,7 +1114,7 @@ func (f *MultipartForm) Stream() (body io.ReadCloser, contentType string, err er
 //
 // Use it with [WithCheckRedirect]:
 //
-//	client, _ := hqgohttp.New(
+//	client := hqgohttp.New(
 //		hqgohttp.WithCheckRedirect(hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")),
 //	)
 //
@@ -992,19 +1126,47 @@ func (f *MultipartForm) Stream() (body io.ReadCloser, contentType string, err er
 //     policy.
 func StripSensitiveHeadersOnRedirect(keys ...string) (checkRedirect func(req *http.Request, via []*http.Request) error) {
 	checkRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) == 0 {
+		if len(via) == 0 || req.URL == nil {
 			return nil
 		}
 
-		previous := via[len(via)-1]
-		if req.URL == nil || previous.URL == nil {
-			return nil
+		origin := via[0]
+		strip := origin.URL == nil
+
+		if !strip {
+			for i, current := range via {
+				if current.URL == nil || !strings.EqualFold(current.URL.Host, origin.URL.Host) {
+					strip = true
+
+					break
+				}
+
+				if i > 0 {
+					previous := via[i-1]
+					downgrade := strings.EqualFold(previous.URL.Scheme, "https") &&
+						strings.EqualFold(current.URL.Scheme, "http")
+
+					if downgrade {
+						strip = true
+
+						break
+					}
+				}
+			}
 		}
 
-		sameHost := strings.EqualFold(req.URL.Host, previous.URL.Host)
-		downgrade := previous.URL.Scheme == "https" && req.URL.Scheme == "http"
+		if !strip {
+			last := via[len(via)-1]
 
-		if sameHost && !downgrade {
+			switch {
+			case !strings.EqualFold(req.URL.Host, origin.URL.Host):
+				strip = true
+			case strings.EqualFold(last.URL.Scheme, "https") && strings.EqualFold(req.URL.Scheme, "http"):
+				strip = true
+			}
+		}
+
+		if !strip {
 			return nil
 		}
 

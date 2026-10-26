@@ -82,3 +82,14 @@ func TestRateLimiterFunc(t *testing.T) {
 			"Expected the limiter failure to abort before any retry")
 	})
 }
+
+func TestRateLimiterFunc_Nil(t *testing.T) {
+	t.Parallel()
+
+	var limiter hqgohttp.RateLimiterFunc
+
+	err := limiter.Wait(t.Context())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil limiter")
+}
