@@ -5,96 +5,114 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"reflect"
 	"strings"
 	"sync"
 )
 
-// ReusableReadCloser implements the io.ReadCloser interface by wrapping an in‑memory
-// byte slice and a bytes.Reader. It allows repeated reads of the same data by automatically
-// resetting the reader's position to the beginning when the end of the data is reached.
+// ReusableReadCloser implements the io.ReadCloser interface by wrapping an
+// in‑memory byte slice and a bytes.Reader. Reads follow the io.Reader contract:
+// the closer returns io.EOF when the data is exhausted. Call [Reset] to read
+// the payload again.
 //
-// The rewind makes the closer safe only under a length-bounded consumer, such
-// as an *http.Request body with a known ContentLength: the consumer stops
-// after the announced number of bytes, so the reader never loops. Do not pass
-// it to io.ReadAll, io.Copy, or any other consumer that reads until io.EOF —
-// the reader rewinds instead of ending, and such a read never terminates.
+// An *http.Request built with [New] exposes a GetBody function that returns a
+// fresh closer, so retries and redirects replay the full payload without
+// relying on the reader's position.
+//
+// The zero value is usable and reads as an empty payload. A nil
+// *ReusableReadCloser is also safe: Read returns io.EOF and Reset is a no-op.
 //
 // Fields:
-//   - mu (sync.Mutex): A mutex to ensure thread-safe operations on the internal state.
-//   - data ([]byte): The complete byte slice containing the data to be read.
-//   - reader (*bytes.Reader): A bytes.Reader that facilitates reading from the data.
+//   - mu (sync.Mutex): guards the reader position.
+//   - data ([]byte): the immutable payload served by every read cycle.
+//   - reader (*bytes.Reader): the cursor over data.
 type ReusableReadCloser struct {
 	mu     sync.Mutex
 	data   []byte
 	reader *bytes.Reader
 }
 
-// Read reads up to len(p) bytes from the internal data into the provided buffer p.
-// It implements the io.Reader interface. When the end of the data is reached (EOF),
-// the reader automatically resets to the beginning, allowing the data to be read repeatedly.
-//
-// The rewind means a consumer that reads until io.EOF never finishes: only
-// read it through a length-bounded consumer such as an *http.Request body
-// with a known ContentLength. Never pass it to io.ReadAll or io.Copy.
-//
-// Behavior:
-//  1. If the internal data is empty, Read returns 0 and io.EOF.
-//  2. Data is read from the bytes.Reader into p.
-//  3. When an EOF is encountered:
-//     - If some data has been read (n > 0), the reader resets and the EOF error is suppressed.
-//     - If no data was read (n == 0), the reader resets and the read is retried.
+// Compile-time guard ensuring [ReusableReadCloser] satisfies [io.ReadCloser].
+var _ io.ReadCloser = (*ReusableReadCloser)(nil)
+
+// Read reads up to len(p) bytes from the internal data into the provided
+// buffer p. It implements the io.Reader interface and returns io.EOF once the
+// data is exhausted, matching the convention every generic reader consumer
+// expects. Call [Reset] to read the payload again.
 //
 // Concurrency:
 //   - The method employs a mutex (mu) to guarantee that concurrent calls to Read are thread-safe.
 //
 // Parameters:
-//   - p ([]byte): The buffer into which data is to be read.
+//   - p ([]byte): the buffer into which data is to be read.
 //
 // Returns:
-//   - n (int): The number of bytes successfully read into the buffer p.
-//   - err (error): An error encountered during reading (other than EOF, which is handled internally).
+//   - n (int): the number of bytes successfully read into the buffer p.
+//   - err (error): io.EOF once the data is exhausted, or a read error from the
+//     underlying reader.
 func (r *ReusableReadCloser) Read(p []byte) (n int, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if len(r.data) == 0 {
+	if r == nil {
 		return 0, io.EOF
 	}
 
-	n, err = r.reader.Read(p)
-	if err == io.EOF {
-		if n > 0 {
-			r.reset()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-			err = nil
-		} else {
-			r.reset()
-
-			n, err = r.reader.Read(p)
-		}
+	if r.reader == nil {
+		r.reader = bytes.NewReader(r.data)
 	}
 
-	return
+	n, err = r.reader.Read(p)
+
+	return n, err
 }
 
 // Reset rewinds the reader to the beginning of the data, so the next Read
-// returns the payload from the start. It exists for consumers that want to
-// resend the body on demand — for example an HTTP/2 fallback attempt — instead
-// of relying on the automatic rewind.
+// returns the payload from the start. The client calls it to resend a body on
+// a retry or an HTTP/2 fallback attempt.
 func (r *ReusableReadCloser) Reset() {
+	if r == nil {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.reset()
 }
 
+// clone returns an independent closer over the same immutable payload,
+// positioned at the start. It backs the GetBody function of requests built by
+// [New].
+//
+// Returns:
+//   - clone (*ReusableReadCloser): a fresh closer over the same data.
+func (r *ReusableReadCloser) clone() (clone *ReusableReadCloser) {
+	if r == nil {
+		return &ReusableReadCloser{reader: bytes.NewReader(nil)}
+	}
+
+	clone = &ReusableReadCloser{
+		data:   r.data,
+		reader: bytes.NewReader(r.data),
+	}
+
+	return clone
+}
+
 // reset repositions the internal bytes.Reader to the beginning of the data.
-// This helper function is invoked when EOF is encountered to allow the data
-// to be read again from the start. Any errors from Seek are ignored because
-// the operation is guaranteed to succeed with an in‑memory data source.
+// Any errors from Seek are ignored because the operation is guaranteed to
+// succeed with an in‑memory data source.
 //
 // The caller must hold r.mu.
 func (r *ReusableReadCloser) reset() {
+	if r.reader == nil {
+		r.reader = bytes.NewReader(r.data)
+
+		return
+	}
+
 	_, _ = r.reader.Seek(0, io.SeekStart)
 }
 
@@ -104,8 +122,17 @@ func (r *ReusableReadCloser) reset() {
 // Returns:
 //   - err (error): Always nil.
 func (r *ReusableReadCloser) Close() (err error) {
-	return
+	return nil
 }
+
+// ErrUnsupportedBodyType reports an input type that [NewReusableReadCloser]
+// cannot convert into a request body.
+var ErrUnsupportedBodyType = errors.New("unsupported body type")
+
+// ErrBodyTooLarge reports a request body that exceeds the configured buffering
+// limit. It is returned by [NewReusableReadCloserLimited] and
+// [NewLimited].
+var ErrBodyTooLarge = errors.New("request body exceeds the configured limit")
 
 // NewReusableReadCloser creates a new instance of ReusableReadCloser from a variety of input data types.
 // The function converts the provided input into an in‑memory byte slice and initializes a bytes.Reader,
@@ -113,34 +140,84 @@ func (r *ReusableReadCloser) Close() (err error) {
 //
 // Supported input types via type assertion include:
 //   - nil: Results in an empty byte slice.
-//   - []byte: Uses the provided byte slice directly.
-//   - *[]byte: Dereferences the pointer to obtain the byte slice.
+//   - []byte: Copies the provided byte slice.
+//   - *[]byte: Dereferences the pointer and copies the byte slice.
 //   - string: Converts the string into a byte slice.
-//   - *bytes.Buffer: Retrieves the underlying bytes from the buffer.
+//   - *bytes.Buffer: Copies the buffer's unread bytes.
 //   - *bytes.Reader, *strings.Reader, *io.SectionReader, io.ReadSeeker, io.Reader:
-//     Reads the entire content into a byte slice using io.ReadAll.
+//     Reads the remaining content into a byte slice using io.ReadAll.
+//
+// The payload is owned by the returned closer. Later mutations of a []byte,
+// *[]byte, or *bytes.Buffer argument do not change the request body. An input
+// that implements io.Closer is closed after it has been consumed, including
+// when reading fails.
 //
 // Parameters:
-//   - raw (any): The input data to be converted to a byte slice. The function handles
+//   - raw (any): the input data to be converted to a byte slice. The function handles
 //     the conversion based on the dynamic type of the input.
 //
 // Returns:
-//   - reusableReadCloser (*ReusableReadCloser): A pointer to the newly created ReusableReadCloser instance.
-//   - err (error): An error if the input type is unsupported or if an error occurs during data reading.
+//   - reusableReadCloser (*ReusableReadCloser): a pointer to the newly created ReusableReadCloser instance.
+//   - err (error): an error if the input type is unsupported or if an error occurs during data reading.
 func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err error) {
+	reusableReadCloser, err = NewReusableReadCloserLimited(raw, 0)
+
+	return reusableReadCloser, err
+}
+
+// NewReusableReadCloserLimited creates a [ReusableReadCloser] from raw while
+// refusing to buffer more than limit bytes. A non-positive limit means
+// unlimited.
+//
+// The input types are the same as [NewReusableReadCloser]. The limit is checked
+// before copying byte slices, strings, and buffers, and while reading an
+// io.Reader, so an oversized payload is rejected without being fully retained.
+// An input that implements io.Closer is closed after it has been consumed,
+// including when reading fails or the limit is exceeded.
+//
+// Parameters:
+//   - raw (any): the input data to convert.
+//   - limit (int64): the maximum payload size in bytes; non-positive means
+//     unlimited.
+//
+// Returns:
+//   - reusableReadCloser (*ReusableReadCloser): the buffered body.
+//   - err (error): [ErrBodyTooLarge] when the payload exceeds the limit,
+//     [ErrUnsupportedBodyType] for an unsupported type, or a read error.
+func NewReusableReadCloserLimited(raw any, limit int64) (reusableReadCloser *ReusableReadCloser, err error) {
 	var data []byte
 
 	switch v := raw.(type) {
 	case nil:
 		data = []byte{}
 	case []byte:
-		data = v
+		if exceedsLimit(int64(len(v)), limit) {
+			return nil, ErrBodyTooLarge
+		}
+
+		data = bytes.Clone(v)
 	case *[]byte:
-		data = *v
+		if v != nil {
+			if exceedsLimit(int64(len(*v)), limit) {
+				return nil, ErrBodyTooLarge
+			}
+
+			data = bytes.Clone(*v)
+		}
 	case string:
+		if exceedsLimit(int64(len(v)), limit) {
+			return nil, ErrBodyTooLarge
+		}
+
 		data = []byte(v)
 	case *bytes.Buffer:
-		data = v.Bytes()
+		if v != nil {
+			if exceedsLimit(int64(v.Len()), limit) {
+				return nil, ErrBodyTooLarge
+			}
+
+			data = bytes.Clone(v.Bytes())
+		}
 	case *bytes.Reader, *strings.Reader, *io.SectionReader, io.ReadSeeker, io.Reader:
 		var r io.Reader
 
@@ -155,20 +232,37 @@ func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err
 			r = rr
 		case io.Reader:
 			r = rr
-		default:
-			err = fmt.Errorf("%w: %T", errUnsupportedType, v)
-
-			return
 		}
 
-		data, err = io.ReadAll(r)
+		if isNilReader(r) {
+			data = []byte{}
+
+			break
+		}
+
+		if closer, ok := r.(io.Closer); ok {
+			defer func() {
+				_ = closer.Close()
+			}()
+		}
+
+		if limit > 0 && limit != math.MaxInt64 {
+			data, err = io.ReadAll(io.LimitReader(r, limit+1))
+		} else {
+			data, err = io.ReadAll(r)
+		}
+
 		if err != nil {
-			return
+			return nil, err
+		}
+
+		if exceedsLimit(int64(len(data)), limit) {
+			return nil, ErrBodyTooLarge
 		}
 	default:
-		err = fmt.Errorf("%w: %T", errUnsupportedType, v)
+		err = fmt.Errorf("%w: %T", ErrUnsupportedBodyType, v)
 
-		return
+		return nil, err
 	}
 
 	reusableReadCloser = &ReusableReadCloser{
@@ -176,9 +270,42 @@ func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err
 		reader: bytes.NewReader(data),
 	}
 
-	return
+	return reusableReadCloser, nil
 }
 
-// errUnsupportedType is a package-level error indicating that the provided input type
-// to NewReusableReadCloser is not supported.
-var errUnsupportedType = errors.New("unsupported type")
+// exceedsLimit reports whether size is over a positive limit.
+//
+// Parameters:
+//   - size (int64): the payload size.
+//   - limit (int64): the maximum allowed size; non-positive means unlimited.
+//
+// Returns:
+//   - exceeds (bool): true when size is greater than a positive limit.
+func exceedsLimit(size, limit int64) (exceeds bool) {
+	exceeds = limit > 0 && size > limit
+
+	return exceeds
+}
+
+// isNilReader reports whether r is nil or holds a typed-nil value, so a
+// typed-nil pointer is treated as an empty body instead of panicking on Read.
+//
+// Parameters:
+//   - r (io.Reader): the reader to inspect.
+//
+// Returns:
+//   - nilReader (bool): true when r is nil or a typed-nil value.
+func isNilReader(r io.Reader) (nilReader bool) {
+	if r == nil {
+		return true
+	}
+
+	value := reflect.ValueOf(r)
+
+	switch value.Kind() { //nolint:exhaustive // Only nilable kinds are relevant.
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		nilReader = value.IsNil()
+	}
+
+	return nilReader
+}

@@ -25,6 +25,7 @@ func TestMethod_String(t *testing.T) {
 		{"PATCH", hqgohttpmethod.PATCH, http.MethodPatch},
 		{"POST", hqgohttpmethod.POST, http.MethodPost},
 		{"PUT", hqgohttpmethod.PUT, http.MethodPut},
+		{"QUERY", hqgohttpmethod.QUERY, "QUERY"},
 		{"TRACE", hqgohttpmethod.TRACE, http.MethodTrace},
 	}
 

@@ -1,10 +1,10 @@
 package mime
 
-// MIME represents an Internet Media Type (or content type) as defined by IANA.
+// MIME represents an Internet Media Type (or content type).
 //
-// As a string alias, MIME allows for easy integration with functions and libraries
-// that operate on plain strings while providing additional type safety.
-// This reduces errors such as typos or the use of invalid MIME type values.
+// MIME is a defined string type, so it integrates with string-based APIs.
+// Conversion from any string is allowed; the type does not validate values. The
+// constants below cover common registered and de facto media types.
 type MIME string
 
 // String returns the underlying string representation of the MIME type.
@@ -14,44 +14,46 @@ type MIME string
 // string is required.
 //
 // Returns:
-//   - mime (string): The MIME type as a plain string.
+//   - mime (string): the MIME type as a plain string.
 func (m MIME) String() (mime string) {
 	mime = string(m)
 
-	return
+	return mime
 }
 
 // Predefined MIME type constants.
 //
-// These constants represent a wide range of commonly used MIME types as defined by IANA.
-// They are grouped by content category such as application, audio, video, image, font, and text.
-// Using these constants helps enforce type safety and prevents errors related to invalid or
-// misspelled MIME type values.
+// These constants cover commonly used media types, including IANA-registered
+// types and de facto x- types. They are ordered by name for readability.
 const (
-	AACAudio                 MIME = "audio/aac"
-	AbiWordDocument          MIME = "application/x-abiword"
-	AmazonKindleEBook        MIME = "application/vnd.amazon.ebook"
-	AppleInstallerPackage    MIME = "application/vnd.apple.installer+xml"
-	ArchiveDocument          MIME = "application/x-freearc"
-	AVIFImage                MIME = "image/avif"
-	AVIVideo                 MIME = "video/x-msvideo"
-	BinaryData               MIME = "application/octet-stream"
-	BitmapImage              MIME = "image/bmp"
-	BourneShellScript        MIME = "application/x-sh"
-	BZip2Archive             MIME = "application/x-bzip2"
-	BZipArchive              MIME = "application/x-bzip"
-	CDAudio                  MIME = "application/x-cdf"
-	CShellScript             MIME = "application/x-csh"
-	CSS                      MIME = "text/css"
-	CSV                      MIME = "text/csv"
-	EPUB                     MIME = "application/epub+zip"
-	GZipCompressedArchive    MIME = "application/gzip"
-	GIF                      MIME = "image/gif"
-	HTML                     MIME = "text/html"
-	ICalendar                MIME = "text/calendar"
-	IconFormat               MIME = "image/vnd.microsoft.icon"
-	JavaArchive              MIME = "application/java-archive"
-	JavaScript               MIME = "text/javascript"
+	AACAudio              MIME = "audio/aac"
+	AbiWordDocument       MIME = "application/x-abiword"
+	AmazonKindleEBook     MIME = "application/vnd.amazon.ebook"
+	AppleInstallerPackage MIME = "application/vnd.apple.installer+xml"
+	ArchiveDocument       MIME = "application/x-freearc"
+	AVIFImage             MIME = "image/avif"
+	AVIVideo              MIME = "video/x-msvideo"
+	BinaryData            MIME = "application/octet-stream"
+	BitmapImage           MIME = "image/bmp"
+	BourneShellScript     MIME = "application/x-sh"
+	BZip2Archive          MIME = "application/x-bzip2"
+	BZipArchive           MIME = "application/x-bzip"
+	CDAudio               MIME = "application/x-cdf"
+	CShellScript          MIME = "application/x-csh"
+	CSS                   MIME = "text/css"
+	CSV                   MIME = "text/csv"
+	EPUB                  MIME = "application/epub+zip"
+	EventStream           MIME = "text/event-stream"
+	FormURLEncoded        MIME = "application/x-www-form-urlencoded"
+	GZipCompressedArchive MIME = "application/gzip"
+	GIF                   MIME = "image/gif"
+	HTML                  MIME = "text/html"
+	ICalendar             MIME = "text/calendar"
+	IconFormat            MIME = "image/vnd.microsoft.icon"
+	JavaArchive           MIME = "application/java-archive"
+	JavaScript            MIME = "text/javascript"
+
+	// Deprecated: JavaScript covers this media type; this constant is an alias.
 	JavaScriptModule         MIME = "text/javascript"
 	JPEG                     MIME = "image/jpeg"
 	JSON                     MIME = "application/json"
@@ -69,6 +71,7 @@ const (
 	MP4Video                 MIME = "video/mp4"
 	MPEGTransportStream      MIME = "video/mp2t"
 	MPEGVideo                MIME = "video/mpeg"
+	MultipartFormData        MIME = "multipart/form-data"
 	OGG                      MIME = "application/ogg"
 	OGGAudio                 MIME = "audio/ogg"
 	OGGVideo                 MIME = "video/ogg"
