@@ -19,11 +19,11 @@ type Header string
 // performs a type conversion to string.
 //
 // Returns:
-//   - header (string): The HTTP header field name as a string.
+//   - header (string): the HTTP header field name as a string.
 func (h Header) String() (header string) {
 	header = string(h)
 
-	return
+	return header
 }
 
 // Predefined HTTP header constants.

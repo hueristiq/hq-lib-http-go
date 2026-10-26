@@ -1,4 +1,4 @@
-package utils
+package header
 
 import "strings"
 
@@ -13,10 +13,10 @@ import "strings"
 //   - Hyphens are preserved as separators.
 //
 // Parameters:
-//   - key (string): The input header key to canonicalize (e.g., "content-type", "ACCEPT-RANGES").
+//   - key (string): the input header key to canonicalize (e.g., "content-type", "ACCEPT-RANGES").
 //
 // Returns:
-//   - canonicalKey (string): The canonicalized header key (e.g., "Content-Type", "Accept-Ranges").
+//   - canonicalKey (string): the canonicalized header key (e.g., "Content-Type", "Accept-Ranges").
 func CanonicalizeHeaderKey(key string) (canonicalKey string) {
 	var b strings.Builder
 
@@ -38,5 +38,5 @@ func CanonicalizeHeaderKey(key string) (canonicalKey string) {
 
 	canonicalKey = b.String()
 
-	return
+	return canonicalKey
 }

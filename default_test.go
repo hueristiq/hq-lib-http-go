@@ -1,14 +1,17 @@
 package http_test
 
 import (
+	"context"
+	"io"
 	"net/http"
-	"sync/atomic"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	hqgohttp "github.com/hueristiq/hq-lib-http-go"
+	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 )
 
 func TestDefaultHTTPPooledTransport(t *testing.T) {
@@ -63,19 +66,120 @@ func TestDefaultHTTPClients(t *testing.T) {
 	})
 }
 
-func TestClient_CloseIdleConnections(t *testing.T) {
+func TestPackageLevelShortcuts_Methods(t *testing.T) {
 	t.Parallel()
 
-	var closes atomic.Int32
+	const payload = "shortcut payload"
 
-	transport := &closeCountingTransport{closes: &closes}
+	tests := []struct {
+		name       string
+		wantMethod string
+		wantBody   string
+		call       func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error)
+	}{
+		{
+			name:       "Head",
+			wantMethod: http.MethodHead,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Head(ctx, rawURL)
+			},
+		},
+		{
+			name:       "Post",
+			wantMethod: http.MethodPost,
+			wantBody:   payload,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Post(ctx, rawURL, payload)
+			},
+		},
+		{
+			name:       "Query",
+			wantMethod: hqgohttpmethod.QUERY.String(),
+			wantBody:   payload,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Query(ctx, rawURL, payload)
+			},
+		},
+		{
+			name:       "Put",
+			wantMethod: http.MethodPut,
+			wantBody:   payload,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Put(ctx, rawURL, payload)
+			},
+		},
+		{
+			name:       "Patch",
+			wantMethod: http.MethodPatch,
+			wantBody:   payload,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Patch(ctx, rawURL, payload)
+			},
+		},
+		{
+			name:       "Delete",
+			wantMethod: http.MethodDelete,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Delete(ctx, rawURL)
+			},
+		},
+		{
+			name:       "Options",
+			wantMethod: http.MethodOptions,
+			call: func(ctx context.Context, rawURL string) (res *hqgohttp.Response, err error) {
+				return hqgohttp.Options(ctx, rawURL)
+			},
+		},
+	}
 
-	client, err := hqgohttp.NewClient(hqgohttp.WithHTTPClient(&http.Client{Transport: transport}))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			type request struct {
+				method string
+				body   string
+			}
+
+			requests := make(chan request, 1)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+
+				requests <- request{method: r.Method, body: string(body)}
+
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			t.Cleanup(server.Close)
+
+			res, err := tt.call(t.Context(), server.URL)
+
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.NoError(t, res.Body.Close())
+			assert.Equal(t, http.StatusNoContent, res.StatusCode)
+
+			got := <-requests
+
+			assert.Equal(t, tt.wantMethod, got.method)
+			assert.Equal(t, tt.wantBody, got.body)
+		})
+	}
+}
+
+func TestPackageLevelShortcuts(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("package level"))
+	}))
+
+	t.Cleanup(server.Close)
+
+	res, err := hqgohttp.Get(t.Context(), server.URL)
 
 	require.NoError(t, err)
+	require.NotNil(t, res)
 
-	client.CloseIdleConnections()
-
-	assert.Equal(t, int32(1), closes.Load(),
-		"Expected CloseIdleConnections to reach the primary client's transport")
+	assert.Equal(t, "package level", readBody(t, res))
 }

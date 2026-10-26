@@ -15,7 +15,7 @@ import (
 // responseSink and errSink keep benchmark results alive so the compiler
 // cannot optimize the measured calls away.
 var (
-	responseSink *http.Response
+	responseSink *hqgohttp.Response
 	errSink      error
 	boolSink     bool
 )
@@ -30,10 +30,7 @@ func Benchmark_Client_Do(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client, err := hqgohttp.NewClient()
-	if err != nil {
-		b.Fatalf("Expected no error, got %v", err)
-	}
+	client := hqgohttp.New()
 
 	req, err := hqgohttprequest.New(b.Context(), hqgohttpmethod.GET.String(), server.URL, nil)
 	if err != nil {
@@ -43,11 +40,11 @@ func Benchmark_Client_Do(b *testing.B) {
 	b.ReportAllocs()
 
 	var (
-		res *http.Response
+		res *hqgohttp.Response
 	)
 
 	for b.Loop() {
-		res, err = client.Do(b.Context(), req)
+		res, err = client.Do(req)
 		if err != nil {
 			b.Fatalf("Expected no error, got %v", err)
 		}
@@ -70,19 +67,17 @@ func Benchmark_Client_Get(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client, err := hqgohttp.NewClient()
-	if err != nil {
-		b.Fatalf("Expected no error, got %v", err)
-	}
+	client := hqgohttp.New()
 
 	b.ReportAllocs()
 
 	var (
-		res *http.Response
+		res *hqgohttp.Response
+		err error
 	)
 
 	for b.Loop() {
-		res, err = client.Get(b.Context(), server.URL)
+		res, err = client.Get(server.URL)
 		if err != nil {
 			b.Fatalf("Expected no error, got %v", err)
 		}
@@ -105,25 +100,22 @@ func Benchmark_RequestBuilder_Do(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client, err := hqgohttp.NewClient()
-	if err != nil {
-		b.Fatalf("Expected no error, got %v", err)
-	}
+	client := hqgohttp.New()
 
 	b.ReportAllocs()
 
 	var (
-		res *http.Response
+		res *hqgohttp.Response
+		err error
 	)
 
 	for b.Loop() {
-		res, err = client.NewRequest().
+		res, err = client.Request().
 			Method(hqgohttpmethod.GET).
-			BaseURL(server.URL).
-			Path("/bench").
+			URL(server.URL+"/bench").
 			Param("q", "1").
 			SetHeader("X-Bench", "true").
-			Do(b.Context())
+			Context(b.Context()).Do()
 		if err != nil {
 			b.Fatalf("Expected no error, got %v", err)
 		}
@@ -152,7 +144,7 @@ func Benchmark_DefaultRetryPolicy(b *testing.B) {
 	)
 
 	for b.Loop() {
-		retry, err = hqgohttp.DefaultRetryPolicy(ctx, res, nil)
+		retry, err = hqgohttp.DefaultRetryPolicy(ctx, nil, res, nil, 1)
 	}
 
 	boolSink = retry

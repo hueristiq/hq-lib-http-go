@@ -8,7 +8,7 @@
 //
 // The [Method] type is a string alias with a String method, and the package
 // constants cover the standard methods: GET, HEAD, POST, PUT, PATCH, DELETE,
-// OPTIONS, CONNECT, and TRACE.
+// OPTIONS, CONNECT, TRACE, and QUERY (RFC 10008).
 //
 // The implementation relies on the Go standard library only.
 package method

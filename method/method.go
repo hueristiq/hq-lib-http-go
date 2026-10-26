@@ -12,11 +12,11 @@ type Method string
 // particularly useful when the method needs to be included in HTTP requests, log messages, or debug output.
 //
 // Returns:
-//   - method (string): The HTTP method as a string.
+//   - method (string): the HTTP method as a string.
 func (m Method) String() (method string) {
 	method = string(m)
 
-	return
+	return method
 }
 
 // Predefined HTTP method constants.
@@ -34,5 +34,6 @@ const (
 	PATCH   Method = "PATCH"
 	POST    Method = "POST"
 	PUT     Method = "PUT"
+	QUERY   Method = "QUERY"
 	TRACE   Method = "TRACE"
 )

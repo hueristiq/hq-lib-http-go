@@ -19,11 +19,11 @@ type Status int
 // corresponding to the actual HTTP status code (e.g., 200, 404, etc.).
 //
 // Returns:
-//   - status (int): The numeric HTTP status code.
+//   - status (int): the numeric HTTP status code.
 func (s Status) Int() (status int) {
 	status = int(s)
 
-	return
+	return status
 }
 
 // String returns the human-readable description of the HTTP status code.
@@ -33,7 +33,7 @@ func (s Status) Int() (status int) {
 // formatted string indicating that the code is unknown.
 //
 // Returns:
-//   - status (string): The descriptive text for the HTTP status code.
+//   - status (string): the descriptive text for the HTTP status code.
 func (s Status) String() (status string) {
 	status = http.StatusText(s.Int())
 
@@ -41,7 +41,7 @@ func (s Status) String() (status string) {
 		status = fmt.Sprintf("Unknown Status (%d)", s.Int())
 	}
 
-	return
+	return status
 }
 
 // IsInformational checks if the status code is an informational response (1xx).
@@ -50,7 +50,7 @@ func (s Status) String() (status string) {
 // and is being processed, but no final response is yet available.
 //
 // Returns:
-//   - isInformational (bool): True if s is between 100 and 199, false otherwise.
+//   - isInformational (bool): true if s is between 100 and 199, false otherwise.
 func (s Status) IsInformational() (isInformational bool) {
 	return s >= 100 && s < 200
 }
@@ -61,7 +61,7 @@ func (s Status) IsInformational() (isInformational bool) {
 // received, understood, and accepted by the server.
 //
 // Returns:
-//   - isSuccess (bool): True if s is between 200 and 299, false otherwise.
+//   - isSuccess (bool): true if s is between 200 and 299, false otherwise.
 func (s Status) IsSuccess() (isSuccess bool) {
 	return s >= 200 && s < 300
 }
@@ -72,7 +72,7 @@ func (s Status) IsSuccess() (isSuccess bool) {
 // fulfill the request, usually involving a change in URL or method.
 //
 // Returns:
-//   - isRedirection (bool): True if s is between 300 and 399, false otherwise.
+//   - isRedirection (bool): true if s is between 300 and 399, false otherwise.
 func (s Status) IsRedirection() (isRedirection bool) {
 	return s >= 300 && s < 400
 }
@@ -84,7 +84,7 @@ func (s Status) IsRedirection() (isRedirection bool) {
 // a server error (5xx).
 //
 // Returns:
-//   - isError (bool): True if s is in the 4xx or 5xx range, false otherwise.
+//   - isError (bool): true if s is in the 4xx or 5xx range, false otherwise.
 func (s Status) IsError() (isError bool) {
 	return s.IsClientError() || s.IsServerError()
 }
@@ -95,7 +95,7 @@ func (s Status) IsError() (isError bool) {
 // request.
 //
 // Returns:
-//   - isClientError (bool): True if s is between 400 and 499, false otherwise.
+//   - isClientError (bool): true if s is between 400 and 499, false otherwise.
 func (s Status) IsClientError() (isClientError bool) {
 	return s >= 400 && s < 500
 }
@@ -106,7 +106,7 @@ func (s Status) IsClientError() (isClientError bool) {
 // valid request.
 //
 // Returns:
-//   - isServerError (bool): True if s is between 500 and 599, false otherwise.
+//   - isServerError (bool): true if s is between 500 and 599, false otherwise.
 func (s Status) IsServerError() (isServerError bool) {
 	return s >= 500 && s < 600
 }

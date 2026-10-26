@@ -14,11 +14,11 @@ type MIME string
 // string is required.
 //
 // Returns:
-//   - mime (string): The MIME type as a plain string.
+//   - mime (string): the MIME type as a plain string.
 func (m MIME) String() (mime string) {
 	mime = string(m)
 
-	return
+	return mime
 }
 
 // Predefined MIME type constants.

@@ -1,11 +1,11 @@
-package utils_test
+package header_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	hqgohttpheaderutils "github.com/hueristiq/hq-lib-http-go/header/utils"
+	hqgohttpheader "github.com/hueristiq/hq-lib-http-go/header"
 )
 
 func TestCanonicalizeHeaderKey(t *testing.T) {
@@ -62,7 +62,7 @@ func TestCanonicalizeHeaderKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := hqgohttpheaderutils.CanonicalizeHeaderKey(tt.input)
+			result := hqgohttpheader.CanonicalizeHeaderKey(tt.input)
 
 			assert.Equal(t, tt.expected, result, "CanonicalizeHeaderKey(%q) = %q; want %q", tt.input, result, tt.expected)
 		})
