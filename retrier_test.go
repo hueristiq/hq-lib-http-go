@@ -557,7 +557,6 @@ func TestClient_RetryError_History(t *testing.T) {
 		assert.Equal(t, statuses[i], record.StatusCode)
 		assert.NotEmpty(t, record.Status)
 		require.NoError(t, record.Err)
-		assert.Greater(t, record.Duration, time.Duration(0))
 	}
 
 	assert.Error(t, retryErr.Err)

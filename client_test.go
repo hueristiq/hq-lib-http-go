@@ -1278,7 +1278,6 @@ func TestClient_OnRequestAndOnResponsePerRequest(t *testing.T) {
 		hqgohttp.WithRequestOnResponse(func(event hqgohttp.ResponseEvent) {
 			assert.Equal(t, 1, event.Attempt)
 			assert.NotNil(t, event.Response)
-			assert.Positive(t, event.Duration)
 			responseAttempts.Add(1)
 		}),
 	)
@@ -1312,7 +1311,6 @@ func TestClient_ObservabilityCallbacks(t *testing.T) {
 		requestAttempts  []int
 		responseAttempts []int
 		statuses         []int
-		durations        []time.Duration
 	)
 
 	client := hqgohttp.New(
@@ -1328,7 +1326,6 @@ func TestClient_ObservabilityCallbacks(t *testing.T) {
 			onResponseCalls.Add(1)
 
 			responseAttempts = append(responseAttempts, event.Attempt)
-			durations = append(durations, event.Duration)
 
 			if event.Response != nil {
 				statuses = append(statuses, event.Response.StatusCode)
@@ -1355,9 +1352,9 @@ func TestClient_ObservabilityCallbacks(t *testing.T) {
 		hqgohttpstatus.OK.Int(),
 	}, statuses, "Expected the callback to observe every attempt's outcome")
 
-	for _, duration := range durations {
-		assert.Positive(t, duration, "Expected each attempt to report its duration")
-	}
+	// Attempt durations are not asserted positive: the Windows monotonic clock
+	// advances at the timer interrupt (15.625 ms by default), so a fast local
+	// attempt can measure as 0s.
 }
 
 func TestClient_MaxRequestsBeforeIdleClose(t *testing.T) {
