@@ -2918,3 +2918,72 @@ func TestClient_RequestURLParserOverride(t *testing.T) {
 	assert.Equal(t, int32(1), clientCalls.Load(), "Expected a nil override to keep the client parser")
 	assert.Equal(t, int32(1), requestCalls.Load())
 }
+
+// ExampleClient_Get demonstrates the convenience method with a local server.
+func ExampleClient_Get() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, "hello")
+	}))
+
+	defer server.Close()
+
+	client := hqgohttp.New()
+
+	res, err := client.Get(server.URL)
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	body, err := res.Body.String()
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
+
+	fmt.Println(res.StatusCode)
+	fmt.Println(body)
+	// Output:
+	// 200
+	// hello
+}
+
+// ExampleClient_Request demonstrates the fluent request builder.
+func ExampleClient_Request() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//nolint:gosec // Test server echoing the request is the point of the example; no untrusted rendering happens.
+		_, _ = w.Write([]byte(r.Method + " " + r.URL.Query().Get("q")))
+	}))
+
+	defer server.Close()
+
+	client := hqgohttp.New()
+
+	res, err := client.Request().
+		Method(hqgohttpmethod.GET).
+		URL(server.URL).
+		Param("q", "value").
+		Do()
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	body, err := res.Body.String()
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
+
+	fmt.Println(body)
+	// Output:
+	// GET value
+}

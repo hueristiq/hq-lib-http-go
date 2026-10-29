@@ -112,6 +112,24 @@ linters:
         goconst:
             min-len: 2
             min-occurrences: 3
+        importas:
+            alias:
+                - pkg: github.com/hueristiq/hq-lib-http-go
+                  alias: hqgohttp
+                - pkg: github.com/hueristiq/hq-lib-http-go/header
+                  alias: hqgohttpheader
+                - pkg: github.com/hueristiq/hq-lib-http-go/header/link
+                  alias: hqgohttplink
+                - pkg: github.com/hueristiq/hq-lib-http-go/header/useragent
+                  alias: hqgohttpuseragent
+                - pkg: github.com/hueristiq/hq-lib-http-go/method
+                  alias: hqgohttpmethod
+                - pkg: github.com/hueristiq/hq-lib-http-go/mime
+                  alias: hqgohttpmime
+                - pkg: github.com/hueristiq/hq-lib-http-go/request
+                  alias: hqgohttprequest
+                - pkg: github.com/hueristiq/hq-lib-http-go/status
+                  alias: hqgohttpstatus
         gocritic:
             enabled-tags:
                 - performance
