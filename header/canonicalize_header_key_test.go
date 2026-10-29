@@ -2,6 +2,7 @@ package header_test
 
 import (
 	"net/textproto"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,5 +90,40 @@ func TestCanonicalizeHeaderKey_MatchesTextproto(t *testing.T) {
 			"CanonicalizeHeaderKey(%q) must match net/textproto", key)
 		assert.Equal(t, result, hqgohttpheader.CanonicalizeHeaderKey(result),
 			"CanonicalizeHeaderKey must be idempotent for %q", key)
+	}
+}
+
+// FuzzCanonicalizeHeaderKey exercises the canonicalizer over arbitrary
+// inputs: no input may panic, and the result must be idempotent.
+func FuzzCanonicalizeHeaderKey(f *testing.F) {
+	f.Add("Content-Type")
+	f.Add("x-forwarded-for")
+	f.Add("")
+	f.Add("Sec-WebSocket-Accept")
+
+	f.Fuzz(func(t *testing.T, key string) {
+		canonical := hqgohttpheader.CanonicalizeHeaderKey(key)
+
+		if again := hqgohttpheader.CanonicalizeHeaderKey(canonical); again != canonical {
+			t.Fatalf("CanonicalizeHeaderKey(%q) is not idempotent: %q", key, again)
+		}
+
+		if !strings.EqualFold(canonical, key) {
+			t.Fatalf("CanonicalizeHeaderKey(%q) changed the key's case-insensitive value: %q", key, canonical)
+		}
+	})
+}
+
+var canonicalSink string
+
+// BenchmarkCanonicalizeHeaderKey measures the header canonicalization hot
+// path used on every header set.
+func BenchmarkCanonicalizeHeaderKey(b *testing.B) {
+	key := "x-forwarded-for"
+
+	b.ReportAllocs()
+
+	for range b.N {
+		canonicalSink = hqgohttpheader.CanonicalizeHeaderKey(key)
 	}
 }
