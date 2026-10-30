@@ -40,11 +40,11 @@
 go get github.com/hueristiq/hq-lib-http-go@latest
 ```
 
-Requires Go 1.26.3 or later.
+Requires Go 1.26 or later.
 
 ## Usage
 
-The examples import the package under the `hqgohttp` alias:
+The examples import the package under the `hqgohttp` alias; subpackage examples use the `hqgohttp`-prefixed aliases (`hqgohttpheader`, `hqgohttpmethod`, `hqgohttpmime`, and `hqgohttprequest`):
 
 ```go
 import hqgohttp "github.com/hueristiq/hq-lib-http-go"

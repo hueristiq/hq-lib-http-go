@@ -1,6 +1,6 @@
 module github.com/hueristiq/hq-lib-http-go
 
-go 1.26.3
+go 1.26.0
 
 require (
 	github.com/quic-go/quic-go v0.64.1
