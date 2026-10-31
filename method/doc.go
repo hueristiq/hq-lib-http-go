@@ -1,5 +1,4 @@
-// Package method provides a strongly typed representation of HTTP methods as
-// defined by IANA.
+// Package method models HTTP methods as a strongly typed value defined by IANA.
 //
 // It suits code that constructs or compares HTTP methods, where a plain string
 // invites typos that compile fine and fail at runtime.

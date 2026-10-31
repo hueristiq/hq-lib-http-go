@@ -1,5 +1,4 @@
-// Package mime provides a typed representation of Internet Media Types (MIME
-// types).
+// Package mime models Internet Media Types (MIME types) as a typed value.
 //
 // It suits code that sets or inspects Content-Type and Accept headers, where a
 // plain string invites typos that compile fine and fail at runtime.

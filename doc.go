@@ -1,5 +1,4 @@
-// Package http provides an HTTP client for resilient, configurable HTTP
-// communication.
+// Package http implements a resilient, configurable HTTP client.
 //
 // It suits applications that call HTTP services and must absorb transient
 // failure — connection errors, rate limiting (429), and server errors (5xx) —

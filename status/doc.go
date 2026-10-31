@@ -1,4 +1,4 @@
-// Package status provides a typed representation of HTTP status codes.
+// Package status models HTTP status codes as a typed value.
 //
 // It suits code that branches on response status codes, where comparing raw
 // integers obscures intent and invites magic numbers.

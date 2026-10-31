@@ -1,5 +1,5 @@
-// Package header provides a strongly typed collection of HTTP header fields as
-// defined by IANA, along with helpers for canonicalizing header keys.
+// Package header models HTTP header fields as a strongly typed collection
+// defined by IANA, with helpers for canonicalizing header keys.
 //
 // It suits code that sets, reads, or manipulates HTTP headers — clients,
 // servers, middleware built on net/http — where a plain string invites typos

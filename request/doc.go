@@ -1,4 +1,4 @@
-// Package request provides an HTTP request wrapper with a reusable body.
+// Package request wraps an HTTP request with a reusable body.
 //
 // It suits scenarios where the same request is sent repeatedly — retries,
 // logging, proxying — and reading the body must not consume it.
