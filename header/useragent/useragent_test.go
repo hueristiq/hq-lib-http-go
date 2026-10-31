@@ -103,23 +103,23 @@ func TestRandom_Filters(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		options []hqgohttpuseragent.Option
+		options []hqgohttpuseragent.OptionFunc
 	}{
 		{
 			name:    "desktop",
-			options: []hqgohttpuseragent.Option{hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop)},
+			options: []hqgohttpuseragent.OptionFunc{hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop)},
 		},
 		{
 			name:    "mobile",
-			options: []hqgohttpuseragent.Option{hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile)},
+			options: []hqgohttpuseragent.OptionFunc{hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile)},
 		},
 		{
 			name:    "chrome",
-			options: []hqgohttpuseragent.Option{hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome)},
+			options: []hqgohttpuseragent.OptionFunc{hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome)},
 		},
 		{
 			name: "safari mobile",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSafari),
 			},

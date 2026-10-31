@@ -16,14 +16,14 @@ func TestGenerators_Formats(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		options    []hqgohttpuseragent.Option
+		options    []hqgohttpuseragent.OptionFunc
 		patterns   []string
 		contains   []string
 		notContain []string
 	}{
 		{
 			name: "chrome desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome),
 			},
@@ -35,7 +35,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "chrome mobile",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome),
 			},
@@ -46,7 +46,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "firefox desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserFirefox),
 			},
@@ -58,7 +58,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "firefox mobile",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserFirefox),
 			},
@@ -69,7 +69,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "safari desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSafari),
 			},
@@ -81,7 +81,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "safari ios",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSafari),
 			},
@@ -92,7 +92,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "edge desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
 			},
@@ -104,7 +104,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "edge mobile",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
 			},
@@ -115,7 +115,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "opera desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserOpera),
 			},
@@ -127,7 +127,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "opera mobile",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserOpera),
 			},
@@ -138,7 +138,7 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "samsung internet android",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSamsungInternet),
 			},
@@ -233,12 +233,12 @@ func TestGenerators_VendorVersionAlignment(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		options []hqgohttpuseragent.Option
+		options []hqgohttpuseragent.OptionFunc
 		pattern string
 	}{
 		{
 			name: "edge desktop",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
 			},
@@ -246,7 +246,7 @@ func TestGenerators_VendorVersionAlignment(t *testing.T) {
 		},
 		{
 			name: "edge android",
-			options: []hqgohttpuseragent.Option{
+			options: []hqgohttpuseragent.OptionFunc{
 				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
 				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
 			},
