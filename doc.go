@@ -67,7 +67,7 @@
 // [WithTransportWrapper], [WithDialContext],
 // [WithDialer], [WithTLSHandshakeTimeout], [WithProxy], [WithCheckRedirect],
 // [WithCookieJar], [WithHeader] (including a User-Agent default),
-// [WithURLParser], [WithRetrier], the retry policy options ([WithRetryPolicy],
+// [WithURLParser], [WithRetrier], [WithLogger], the retry policy options ([WithRetryPolicy],
 // [WithRetryIdempotent], [WithRetryErrorBodyLimit]), [WithOnRetryExhaustion],
 // [WithPrepareRetry], [WithRateLimiter], the observability callbacks ([WithOnRequest],
 // [WithOnResponse], [WithOnRetry]), [WithMaxRequestsBeforeIdleClose],
@@ -86,8 +86,8 @@
 // [WithProxy], then [WithTransportWrapper]. HTTP/3 clients are supplied whole
 // with [WithHTTP3Client] and are not built or decorated by the library.
 //
-// A single request execution overrides the URL parser, the retrier, the rate
-// limiter, the attempt timeout, the retry hook, the per-attempt callbacks, the
+// A single request execution overrides the URL parser, the retrier, the logger,
+// the rate limiter, the attempt timeout, the retry hook, the per-attempt callbacks, the
 // pre-retry hook, the exhaustion handler, the idempotency restriction, the
 // response-body cap, and the drain and snapshot bounds through
 // [RequestOptionFunc] values ([WithRequestURLParser] and friends) passed to
@@ -111,6 +111,14 @@
 // [RetrierOptions], including the retryable-error predicate, the retry
 // notification, and the parsed Retry-After wait. No module dependency is
 // imposed. With no retrier, every execution makes a single attempt.
+//
+// The logger registered with [WithLogger], or overridden for one request with
+// [WithRequestLogger], is any value whose Debug, Info, Warn, and Error methods
+// match slog's signatures — for example a *[log/slog.Logger]. The client logs
+// outgoing requests and responses at debug, approved retries at warn, and
+// terminal failures at error; method, redacted URL, attempt, status, duration,
+// and error are included, while headers, bodies, and cookies are not. No module
+// dependency is imposed, and a nil logger disables logging.
 //
 // The URL parser registered with [WithURLParser], or overridden for one request
 // with [WithRequestURLParser], is any value with a Parse method returning a
@@ -233,9 +241,9 @@
 // except for the counter driving the periodic idle-connection close, the HTTP/3
 // failure cache, and the shutdown state, which are synchronized. [Client.Close]
 // may be called concurrently with in-flight executions. Callbacks, policies,
-// and the exhaustion handler are invoked synchronously on the goroutine running
-// the attempt and must themselves be safe for concurrent use. A
-// [RequestBuilder] is not safe for concurrent use.
+// the logger, and the exhaustion handler are invoked synchronously on the
+// goroutine running the attempt and must themselves be safe for concurrent use.
+// A [RequestBuilder] is not safe for concurrent use.
 //
 // # Errors
 //

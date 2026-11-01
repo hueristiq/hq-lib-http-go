@@ -40,6 +40,8 @@ import (
 //     [net/url.Parse].
 //   - Retrier (Retrier): the engine running the execution's attempts. Nil makes
 //     a single attempt.
+//   - Logger (Logger): the structured logger used by the execution. Nil
+//     disables logging.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
 //     retry.
 //   - RateLimiter (RateLimiter): the limiter waited on before every attempt.
@@ -61,6 +63,7 @@ type requestOptions struct {
 	MaxRequestBodySize     int64
 	URLParser              hqgohttprequest.URLParser
 	Retrier                Retrier
+	Logger                 Logger
 	RetryPolicy            RetryPolicy
 	RateLimiter            RateLimiter
 	OnRequest              OnRequestFunc
@@ -142,6 +145,7 @@ func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *requestOptions)
 		MaxRequestBodySize:     c.config.MaxRequestBodySize,
 		URLParser:              c.config.URLParser,
 		Retrier:                c.config.Retrier,
+		Logger:                 c.config.Logger,
 		RetryPolicy:            c.config.RetryPolicy,
 		RateLimiter:            c.config.RateLimiter,
 		OnRequest:              c.config.OnRequest,

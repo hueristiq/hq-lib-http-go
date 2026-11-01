@@ -291,6 +291,8 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 //   - Retrier (Retrier): the engine running the attempts of every execution.
 //     Nil means a single attempt; the engine owns the attempt count, waits, and
 //     backoff.
+//   - Logger (Logger): the structured logger used by the execution. Nil
+//     disables logging.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
 //     retry. Nil selects [DefaultRetryPolicy].
 //   - RateLimiter (RateLimiter): the limiter waited on before every retry-engine
@@ -349,6 +351,7 @@ type clientOptions struct {
 	AttemptTimeout             time.Duration
 	URLParser                  hqgohttprequest.URLParser
 	Retrier                    Retrier
+	Logger                     Logger
 	RetryPolicy                RetryPolicy
 	RateLimiter                RateLimiter
 	OnRequest                  OnRequestFunc
@@ -417,8 +420,8 @@ type ClientOptionFunc func(opts *clientOptions)
 // (replaceable with [WithHeader]), no execution timeout
 // ([DefaultResponseBodyTimeout] adds no separate body-read bound), no
 // per-attempt timeout, no retrier (a single attempt per execution),
-// [DefaultRetryPolicy], idempotent-only retries, no rate limiter, no
-// callbacks, no retry hook, no periodic idle-connection close,
+// [DefaultRetryPolicy], idempotent-only retries, no rate limiter, no logger,
+// no callbacks, no retry hook, no periodic idle-connection close,
 // [DefaultResponseReadLimit] as the drain bound, retry-error body capture
 // disabled ([DefaultRetryErrorBodyLimit] is zero), no response or request body
 // cap, and [DefaultHTTP3FallbackTTL] for the HTTP/3 failure cache. A
@@ -1549,6 +1552,27 @@ func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *requestOptions) (
 //   - res (*http.Response): the raw response, or nil on failure.
 //   - err (error): non-nil when the execution fails.
 func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *http.Response, err error) {
+	// attempt counts the retry-engine attempts. A reusable body is reset on
+	// the first attempt so a request reused after a partial send starts from
+	// the beginning; later attempts reuse the body prepared after the previous
+	// attempt was approved for retry.
+	attempt := 0
+
+	if opts != nil && opts.Logger != nil {
+		defer func() {
+			if err == nil {
+				return
+			}
+
+			var request *http.Request
+			if req != nil {
+				request = req.Request
+			}
+
+			logHTTPFailure(opts.Logger, request, attempt, err)
+		}()
+	}
+
 	if req == nil || req.Request == nil {
 		err = fmt.Errorf("http.Client.Do: %w", ErrNilRequest)
 
@@ -1680,12 +1704,6 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 		retryAfterSet bool
 	)
 
-	// attempt counts the retry-engine attempts. A reusable body is reset on
-	// the first attempt so a request reused after a partial send starts from
-	// the beginning; later attempts reuse the body prepared after the previous
-	// attempt was approved for retry.
-	attempt := 0
-
 	var (
 		lastAttemptRequest  *http.Request
 		lastAttemptResponse *http.Response
@@ -1749,6 +1767,8 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 			opts.OnRequest(RequestEvent{Attempt: attempt, Request: attemptReq})
 		}
 
+		logHTTPRequest(opts.Logger, attemptReq, attempt)
+
 		attemptStart := time.Now()
 
 		attemptRes, attemptErr = primaryClient.Do(attemptReq)
@@ -1803,6 +1823,8 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 				Duration: lastAttemptDuration,
 			})
 		}
+
+		logHTTPResponse(opts.Logger, attemptReq, attemptRes, attemptErr, attempt, lastAttemptDuration)
 
 		attemptRecord := RetryAttempt{
 			Attempt:  attempt,
@@ -1922,6 +1944,8 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 			if lastAttemptCancel != nil {
 				lastAttemptCancel(nil)
 			}
+
+			logHTTPRetry(opts.Logger, lastAttemptRequest, lastAttemptResponse, attemptErr, event.Attempt, event.Wait, lastAttemptDuration)
 
 			if opts.OnRetry == nil {
 				return

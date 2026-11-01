@@ -16,6 +16,7 @@
 	- [Rate Limiting](#rate-limiting)
 	- [URL Parser Hook](#url-parser-hook)
 	- [Retrier Hook](#retrier-hook)
+	- [Logging](#logging)
 	- [Standard Client Adapter](#standard-client-adapter)
 	- [Transport and TLS](#transport-and-tls)
 - [Contributing](#contributing)
@@ -29,6 +30,7 @@
 - **Typed Request Inputs and Response Helpers:** `JSON`, `XML`, `Form`, and `Multipart` encode bodies and set the matching `Content-Type`; the response `Body` exposes `Bytes`, `String`, `JSON`, `XML`, `UTF8`, `Stream`, `SSE`, and `Close`.
 - **Idempotent-by-Default Retries:** The default policy retries connection and transport errors, `408`, `429`, and `5xx` responses, and skips permanent failures such as NXDOMAIN. Only idempotent methods are retried by default.
 - **Retrier Hook:** `WithRetrier` accepts any engine with a `Retry` method — for example [hq-lib-retrier-go](https://github.com/hueristiq/hq-lib-retrier-go) adapted with `RetrierFunc` — without imposing a module dependency.
+- **Logger Hook:** `WithLogger` accepts any slog-compatible logger; a `*slog.Logger` works directly, and hq-lib-logger-go plugs in through its `SlogHandler`. Use `WithRequestLogger` for a single execution.
 - **Typed Retry Errors:** When retries run out, `Do` returns a `*RetryError` with the attempt count, attempt history, status, headers, and the last failure.
 - **Rate-Limiter Hook:** `WithRateLimiter` accepts any limiter with a `Wait(ctx) error` method — for example [hq-lib-limiter-go](https://github.com/hueristiq/hq-lib-limiter-go) — without imposing a module dependency.
 - **URL-Parser Hook:** `WithURLParser` accepts any parser with `Parse(raw) (*url.URL, error)` — for example [hq-lib-url-go](https://github.com/hueristiq/hq-lib-url-go)'s parser adapted with `request.URLParserFunc`.
@@ -251,6 +253,21 @@ client := hqgohttp.New(hqgohttp.WithRetrier(retrier))
 ```
 
 With no retrier, every execution makes a single attempt, and a persistent `429` or `5xx` still returns a `*RetryError`. The package does not import hq-lib-retrier-go; the dependency belongs to the application.
+
+### Logging
+
+`WithLogger` accepts any value with slog-compatible `Debug`, `Info`, `Warn`, and `Error` methods. A `*slog.Logger` works directly, and [hq-lib-logger-go](https://github.com/hueristiq/hq-lib-logger-go) plugs in through its `SlogHandler`; `WithRequestLogger` overrides the logger for one execution:
+
+```go
+logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+client := hqgohttp.New(hqgohttp.WithLogger(logger))
+
+res, err := client.Get("https://api.example.com/users",
+	hqgohttp.WithRequestLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil))),
+)
+```
+
+The client logs `http request` and `http response` at debug, approved retries at warn, and terminal failures at error. Method, redacted URL, attempt, status, duration, and error are included; headers, bodies, and cookies are not. A nil logger disables logging.
 
 ### Standard Client Adapter
 
