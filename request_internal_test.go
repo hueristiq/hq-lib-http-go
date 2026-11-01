@@ -28,7 +28,7 @@ func TestRequestOptionFuncs(t *testing.T) {
 	baseRetrier := internalTestRetrier{maxAttempts: 1}
 	otherRetrier := internalTestRetrier{maxAttempts: 2}
 
-	opts := &RequestOptions{
+	opts := &requestOptions{
 		Retrier:           baseRetrier,
 		RetryPolicy:       basePolicy,
 		RateLimiter:       baseLimiter,

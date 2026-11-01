@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -347,10 +346,8 @@ func TestWithTLSConfig_Clones(t *testing.T) {
 
 	protocols := []Protocol{
 		ProtocolAuto,
-		ProtocolAutoHTTP3,
 		ProtocolHTTP1,
 		ProtocolHTTP2,
-		ProtocolHTTP3,
 	}
 
 	for _, protocol := range protocols {
@@ -363,16 +360,11 @@ func TestWithTLSConfig_Clones(t *testing.T) {
 
 			config.ServerName = "mutated.example"
 
-			switch transport := client.config.HTTPClient.Transport.(type) {
-			case *http.Transport:
-				require.NotNil(t, transport.TLSClientConfig)
-				assert.Equal(t, "original.example", transport.TLSClientConfig.ServerName)
-			case *http3.Transport:
-				require.NotNil(t, transport.TLSClientConfig)
-				assert.Equal(t, "original.example", transport.TLSClientConfig.ServerName)
-			default:
-				t.Fatalf("unexpected transport type %T", transport)
-			}
+			transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
+
+			require.True(t, ok)
+			require.NotNil(t, transport.TLSClientConfig)
+			assert.Equal(t, "original.example", transport.TLSClientConfig.ServerName)
 
 			if client.fallbackHTTPClient != nil {
 				transport, ok := client.fallbackHTTPClient.Transport.(*http.Transport)
@@ -388,7 +380,7 @@ func TestWithTLSConfig_Clones(t *testing.T) {
 func TestClientOptions_WithHeader(t *testing.T) {
 	t.Parallel()
 
-	opts := &ClientOptions{}
+	opts := &clientOptions{}
 
 	WithHeader("", "ignored")(opts)
 
@@ -420,7 +412,7 @@ func TestClient_ExecutionTimeoutDefaultsToDisabled(t *testing.T) {
 func TestWithAttemptTimeout(t *testing.T) {
 	t.Parallel()
 
-	opts := &ClientOptions{AttemptTimeout: time.Second}
+	opts := &clientOptions{AttemptTimeout: time.Second}
 
 	WithAttemptTimeout(0)(opts)
 
@@ -455,7 +447,7 @@ func TestSameRoundTripper(t *testing.T) {
 func TestClientOptions_NormalizeResponseBodyTimeout(t *testing.T) {
 	t.Parallel()
 
-	opts := &ClientOptions{ResponseBodyTimeout: -time.Second}
+	opts := &clientOptions{ResponseBodyTimeout: -time.Second}
 
 	opts.normalize()
 
@@ -465,14 +457,14 @@ func TestClientOptions_NormalizeResponseBodyTimeout(t *testing.T) {
 func TestRequestOptions_Normalize(t *testing.T) {
 	t.Parallel()
 
-	opts := &RequestOptions{ResponseReadLimit: 0}
+	opts := &requestOptions{ResponseReadLimit: 0}
 
 	opts.normalize()
 
 	assert.NotNil(t, opts.RetryPolicy)
 	assert.Equal(t, int64(DefaultResponseReadLimit), opts.ResponseReadLimit)
 
-	opts = &RequestOptions{ResponseReadLimit: 128}
+	opts = &requestOptions{ResponseReadLimit: 128}
 
 	opts.normalize()
 
@@ -502,6 +494,12 @@ func TestProtocol_String(t *testing.T) {
 func TestNew_ProtocolSelection(t *testing.T) {
 	t.Parallel()
 
+	h3Client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return newOKResponse("h3"), nil
+		}),
+	}
+
 	tests := []struct {
 		name     string
 		options  []ClientOptionFunc
@@ -524,15 +522,28 @@ func TestNew_ProtocolSelection(t *testing.T) {
 		},
 		{
 			name:    "auto http3",
+			options: []ClientOptionFunc{WithProtocol(ProtocolAutoHTTP3), WithHTTP3Client(h3Client)},
+			validate: func(t *testing.T, client *Client) {
+				t.Helper()
+
+				assert.Same(t, h3Client, client.config.HTTPClient)
+				assert.NotNil(t, client.fallbackHTTPClient)
+				assert.True(t, client.fallbackOnHTTP3)
+				assert.True(t, client.http3Primary)
+			},
+		},
+		{
+			name:    "auto http3 without client falls back to auto",
 			options: []ClientOptionFunc{WithProtocol(ProtocolAutoHTTP3)},
 			validate: func(t *testing.T, client *Client) {
 				t.Helper()
 
-				_, ok := client.config.HTTPClient.Transport.(*http3.Transport)
+				_, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 				assert.True(t, ok)
 				assert.NotNil(t, client.fallbackHTTPClient)
-				assert.True(t, client.fallbackOnHTTP3)
+				assert.False(t, client.fallbackOnHTTP3)
+				assert.False(t, client.http3Primary)
 			},
 		},
 		{
@@ -570,15 +581,23 @@ func TestNew_ProtocolSelection(t *testing.T) {
 		},
 		{
 			name:    "http3",
+			options: []ClientOptionFunc{WithProtocol(ProtocolHTTP3), WithHTTP3Client(h3Client)},
+			validate: func(t *testing.T, client *Client) {
+				t.Helper()
+
+				assert.Same(t, h3Client, client.config.HTTPClient)
+				assert.Nil(t, client.fallbackHTTPClient)
+				assert.False(t, client.fallbackOnHTTP3)
+				assert.True(t, client.http3Primary)
+			},
+		},
+		{
+			name:    "http3 without client",
 			options: []ClientOptionFunc{WithProtocol(ProtocolHTTP3)},
 			validate: func(t *testing.T, client *Client) {
 				t.Helper()
 
-				_, ok := client.config.HTTPClient.Transport.(*http3.Transport)
-
-				assert.True(t, ok)
-				assert.Nil(t, client.fallbackHTTPClient)
-				assert.False(t, client.fallbackOnHTTP3)
+				assert.Nil(t, client.config.HTTPClient)
 			},
 		},
 		{
@@ -724,7 +743,7 @@ func TestIsHTTP3FallbackError(t *testing.T) {
 func TestClient_Do_AutoHTTP3RedirectAbortIsFinal(t *testing.T) {
 	var h3Calls, autoCalls atomic.Int32
 
-	swapHTTP3Seams(t,
+	h3Option := swapHTTP3Seams(t,
 		func(*tls.Config) *http.Client {
 			return &http.Client{
 				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -746,6 +765,7 @@ func TestClient_Do_AutoHTTP3RedirectAbortIsFinal(t *testing.T) {
 
 	client := New(
 		WithProtocol(ProtocolAutoHTTP3),
+		h3Option,
 		withoutProxy(),
 		WithCheckRedirect(func(*http.Request, []*http.Request) error {
 			return redirectErr
@@ -772,7 +792,7 @@ func TestClient_Do_AutoHTTP3RedirectAbortIsFinal(t *testing.T) {
 func TestClient_Do_AutoHTTP3DoesNotFallBackOnPermanentError(t *testing.T) {
 	var h3Calls, autoCalls atomic.Int32
 
-	swapHTTP3Seams(t,
+	h3Option := swapHTTP3Seams(t,
 		func(*tls.Config) *http.Client {
 			return &http.Client{
 				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -791,6 +811,7 @@ func TestClient_Do_AutoHTTP3DoesNotFallBackOnPermanentError(t *testing.T) {
 
 	client := New(
 		WithProtocol(ProtocolAutoHTTP3),
+		h3Option,
 		withoutProxy(),
 	)
 
@@ -815,7 +836,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	t.Run("a failed host skips HTTP/3 for the TTL", func(t *testing.T) {
 		var h3Calls, autoCalls atomic.Int32
 
-		swapHTTP3Seams(t,
+		h3Option := swapHTTP3Seams(t,
 			func(*tls.Config) *http.Client {
 				return &http.Client{
 					Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -830,6 +851,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 
 		client := New(
 			WithProtocol(ProtocolAutoHTTP3),
+			h3Option,
 			withoutProxy(),
 		)
 
@@ -853,7 +875,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	t.Run("a disabled TTL retries HTTP/3 every request", func(t *testing.T) {
 		var h3Calls, autoCalls atomic.Int32
 
-		swapHTTP3Seams(t,
+		h3Option := swapHTTP3Seams(t,
 			func(*tls.Config) *http.Client {
 				return &http.Client{
 					Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -869,6 +891,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 		client := New(
 			WithProtocol(ProtocolAutoHTTP3),
 			WithHTTP3FallbackTTL(0),
+			h3Option,
 			withoutProxy(),
 		)
 
@@ -953,86 +976,6 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	})
 }
 
-func TestClient_WithHTTP3TransportBuilder(t *testing.T) {
-	t.Parallel()
-
-	t.Run("applies to the built HTTP/3 transport", func(t *testing.T) {
-		t.Parallel()
-
-		var calls atomic.Int32
-
-		client := New(
-			WithProtocol(ProtocolHTTP3),
-			WithHTTP3TransportBuilder(func(transport *http3.Transport) *http3.Transport {
-				calls.Add(1)
-
-				transport.MaxResponseHeaderBytes = 1234
-
-				return transport
-			}),
-		)
-
-		assert.Equal(t, int32(1), calls.Load())
-
-		transport, ok := client.config.HTTPClient.Transport.(*http3.Transport)
-
-		require.True(t, ok)
-		assert.Equal(t, 1234, transport.MaxResponseHeaderBytes)
-	})
-
-	t.Run("ignored with a custom transport", func(t *testing.T) {
-		t.Parallel()
-
-		var calls atomic.Int32
-
-		client := New(
-			WithProtocol(ProtocolHTTP3),
-			WithTransport(&http.Transport{}),
-			WithHTTP3TransportBuilder(func(transport *http3.Transport) *http3.Transport {
-				calls.Add(1)
-
-				return transport
-			}),
-		)
-
-		assert.Zero(t, calls.Load())
-		assert.IsType(t, &http.Transport{}, client.config.HTTPClient.Transport)
-	})
-
-	t.Run("ignored with a custom client", func(t *testing.T) {
-		t.Parallel()
-
-		var calls atomic.Int32
-
-		client := New(
-			WithHTTPClient(&http.Client{}),
-			WithHTTP3TransportBuilder(func(transport *http3.Transport) *http3.Transport {
-				calls.Add(1)
-
-				return transport
-			}),
-		)
-
-		require.NotNil(t, client)
-		assert.Zero(t, calls.Load())
-	})
-
-	t.Run("nil result keeps the built transport", func(t *testing.T) {
-		t.Parallel()
-
-		client := New(
-			WithProtocol(ProtocolHTTP3),
-			WithHTTP3TransportBuilder(func(*http3.Transport) *http3.Transport {
-				return nil
-			}),
-		)
-
-		_, ok := client.config.HTTPClient.Transport.(*http3.Transport)
-
-		assert.True(t, ok)
-	})
-}
-
 func TestClient_HTTP3FailureCache_EmptyHost(t *testing.T) {
 	t.Parallel()
 
@@ -1048,35 +991,28 @@ func TestClient_HTTP3FailureCache_EmptyHost(t *testing.T) {
 func TestClient_Do_AutoHTTP3FallsBack(t *testing.T) {
 	var h3Calls, fallbackCalls atomic.Int32
 
-	originalHTTP3Client := newHTTP3Client
-	originalAutoClient := newAutoHTTPClient
+	h3Option := swapHTTP3Seams(t,
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					h3Calls.Add(1)
 
-	t.Cleanup(func() {
-		newHTTP3Client = originalHTTP3Client
-		newAutoHTTPClient = originalAutoClient
-	})
+					return nil, errors.New("h3 unavailable")
+				}),
+			}
+		},
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					fallbackCalls.Add(1)
 
-	newHTTP3Client = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				h3Calls.Add(1)
+					return newOKResponse("fallback body"), nil
+				}),
+			}
+		},
+	)
 
-				return nil, errors.New("h3 unavailable")
-			}),
-		}
-	}
-
-	newAutoHTTPClient = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				fallbackCalls.Add(1)
-
-				return newOKResponse("fallback body"), nil
-			}),
-		}
-	}
-
-	client := New(WithProtocol(ProtocolAutoHTTP3), withoutProxy())
+	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com", nil)
 
@@ -1096,40 +1032,33 @@ func TestClient_Do_AutoHTTP3FallsBack(t *testing.T) {
 func TestClient_Do_AutoHTTP3RewindsBody(t *testing.T) {
 	var fallbackBody string
 
-	originalHTTP3Client := newHTTP3Client
-	originalAutoClient := newAutoHTTPClient
+	h3Option := swapHTTP3Seams(t,
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					_, _ = io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
 
-	t.Cleanup(func() {
-		newHTTP3Client = originalHTTP3Client
-		newAutoHTTPClient = originalAutoClient
-	})
+					return nil, errors.New("h3 unavailable")
+				}),
+			}
+		},
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					body, rerr := io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
+					if rerr != nil {
+						return nil, rerr
+					}
 
-	newHTTP3Client = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				_, _ = io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
+					fallbackBody = string(body)
 
-				return nil, errors.New("h3 unavailable")
-			}),
-		}
-	}
+					return newOKResponse("fallback body"), nil
+				}),
+			}
+		},
+	)
 
-	newAutoHTTPClient = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				body, rerr := io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
-				if rerr != nil {
-					return nil, rerr
-				}
-
-				fallbackBody = string(body)
-
-				return newOKResponse("fallback body"), nil
-			}),
-		}
-	}
-
-	client := New(WithProtocol(ProtocolAutoHTTP3), withoutProxy())
+	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodPut, "https://example.com", []byte("payload"))
 
@@ -1148,33 +1077,26 @@ func TestClient_Do_AutoHTTP3RewindsBody(t *testing.T) {
 func TestClient_Do_AutoHTTP3DoesNotFallBackOnContextError(t *testing.T) {
 	var fallbackCalls atomic.Int32
 
-	originalHTTP3Client := newHTTP3Client
-	originalAutoClient := newAutoHTTPClient
+	h3Option := swapHTTP3Seams(t,
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					return nil, context.Canceled
+				}),
+			}
+		},
+		func(*tls.Config) *http.Client {
+			return &http.Client{
+				Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					fallbackCalls.Add(1)
 
-	t.Cleanup(func() {
-		newHTTP3Client = originalHTTP3Client
-		newAutoHTTPClient = originalAutoClient
-	})
+					return newOKResponse("fallback body"), nil
+				}),
+			}
+		},
+	)
 
-	newHTTP3Client = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				return nil, context.Canceled
-			}),
-		}
-	}
-
-	newAutoHTTPClient = func(_ *tls.Config) *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				fallbackCalls.Add(1)
-
-				return newOKResponse("fallback body"), nil
-			}),
-		}
-	}
-
-	client := New(WithProtocol(ProtocolAutoHTTP3), withoutProxy())
+	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com", nil)
 
@@ -1326,10 +1248,11 @@ func TestClient_Do_FallbackSkippedForNonResendableBody(t *testing.T) {
 func TestClient_Do_AutoHTTP3SkipsH3WhenProxied(t *testing.T) {
 	var h3Calls, autoCalls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
 
 	client := New(
 		WithProtocol(ProtocolAutoHTTP3),
+		h3Option,
 		fixedProxy(&url.URL{Scheme: "http", Host: "proxy.example"}),
 	)
 
@@ -1350,10 +1273,11 @@ func TestClient_Do_AutoHTTP3SkipsH3WhenProxied(t *testing.T) {
 func TestClient_Do_HTTP3RejectsProxy(t *testing.T) {
 	var h3Calls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
 	client := New(
 		WithProtocol(ProtocolHTTP3),
+		h3Option,
 		fixedProxy(&url.URL{Scheme: "http", Host: "proxy.example"}),
 	)
 
@@ -1376,10 +1300,11 @@ func TestClient_Do_HTTP3RejectsProxy(t *testing.T) {
 func TestClient_Do_AutoHTTP3UsesH3WhenSelectorReturnsNil(t *testing.T) {
 	var h3Calls, autoCalls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
 
 	client := New(
 		WithProtocol(ProtocolAutoHTTP3),
+		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
 			return nil, nil //nolint:nilnil // A nil proxy means the request is sent directly.
 		}),
@@ -1402,10 +1327,11 @@ func TestClient_Do_AutoHTTP3UsesH3WhenSelectorReturnsNil(t *testing.T) {
 func TestClient_Do_HTTP3UsesH3WhenProxyDisabled(t *testing.T) {
 	var h3Calls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
 	client := New(
 		WithProtocol(ProtocolHTTP3),
+		h3Option,
 		withoutProxy(),
 	)
 
@@ -1422,10 +1348,10 @@ func TestClient_Do_HTTP3UsesH3WhenProxyDisabled(t *testing.T) {
 }
 
 //nolint:paralleltest // substitutes package-level client seams, which are process-wide state.
-func TestClient_Do_HTTP3WithCustomTransportDoesNotGate(t *testing.T) {
+func TestClient_Do_HTTP3IgnoresTransport(t *testing.T) {
 	var h3Calls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
 	custom := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return newOKResponse("custom"), nil
@@ -1433,8 +1359,9 @@ func TestClient_Do_HTTP3WithCustomTransportDoesNotGate(t *testing.T) {
 
 	client := New(
 		WithProtocol(ProtocolHTTP3),
+		h3Option,
 		WithTransport(custom),
-		fixedProxy(&url.URL{Scheme: "http", Host: "proxy.example"}),
+		withoutProxy(),
 	)
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com", nil)
@@ -1445,20 +1372,21 @@ func TestClient_Do_HTTP3WithCustomTransportDoesNotGate(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	assert.Equal(t, "custom", readBody(t, res))
-	assert.Zero(t, h3Calls.Load())
+	assert.Equal(t, "h3", readBody(t, res))
+	assert.Equal(t, int32(1), h3Calls.Load())
 }
 
 //nolint:paralleltest // substitutes package-level client seams, which are process-wide state.
 func TestClient_Do_HTTP3ProxySelectorError(t *testing.T) {
 	var h3Calls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
 	proxyErr := errors.New("proxy selector failed")
 
 	client := New(
 		WithProtocol(ProtocolHTTP3),
+		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
 			return nil, proxyErr
 		}),
@@ -1483,12 +1411,13 @@ func TestClient_Do_HTTP3ProxySelectorError(t *testing.T) {
 func TestClient_Do_AutoHTTP3UsesAutoOnProxySelectorError(t *testing.T) {
 	var h3Calls, autoCalls atomic.Int32
 
-	swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
+	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
 
 	proxyErr := errors.New("proxy selector failed")
 
 	client := New(
 		WithProtocol(ProtocolAutoHTTP3),
+		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
 			return nil, proxyErr
 		}),
@@ -1787,26 +1716,34 @@ func withoutProxy() ClientOptionFunc {
 	})
 }
 
-// swapHTTP3Seams substitutes the package-level HTTP/3 client constructors for
-// the duration of a test.
-func swapHTTP3Seams(t *testing.T, h3, auto func(*tls.Config) *http.Client) {
+// swapHTTP3Seams substitutes the auto-client constructor and returns the
+// WithHTTP3Client option for the supplied HTTP/3 client constructor. Passing
+// nil for either constructor leaves that seam unset; a nil HTTP/3 constructor
+// yields a nil HTTP/3 client.
+//
+// Returns:
+//   - option (ClientOptionFunc): the HTTP/3 client option to pass to New.
+func swapHTTP3Seams(t *testing.T, h3, auto func(*tls.Config) *http.Client) (option ClientOptionFunc) {
 	t.Helper()
 
-	originalHTTP3 := newHTTP3Client
 	originalAuto := newAutoHTTPClient
 
 	t.Cleanup(func() {
-		newHTTP3Client = originalHTTP3
 		newAutoHTTPClient = originalAuto
 	})
-
-	if h3 != nil {
-		newHTTP3Client = h3
-	}
 
 	if auto != nil {
 		newAutoHTTPClient = auto
 	}
+
+	var client *http.Client
+	if h3 != nil {
+		client = h3(nil)
+	}
+
+	option = WithHTTP3Client(client)
+
+	return option
 }
 
 // countingClient builds a client constructor that records calls and returns a
@@ -1915,4 +1852,68 @@ func TestClient_RetrierPlainErrorClosesLastResponse(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.True(t, body.closed.Load(), "Expected the orphaned response body to be closed")
+}
+
+//nolint:paralleltest // substitutes a package-level client seam, which is process-wide state.
+func TestClient_Do_AutoHTTP3WithoutClientUsesAuto(t *testing.T) {
+	var autoCalls atomic.Int32
+
+	h3Option := swapHTTP3Seams(t, nil, countingClient(&autoCalls, "auto"))
+
+	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
+
+	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com/", nil)
+
+	require.NoError(t, err)
+
+	res, err := client.Do(req)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "auto", readBody(t, res))
+	assert.Equal(t, int32(1), autoCalls.Load())
+}
+
+func TestClient_Do_HTTP3WithoutClient(t *testing.T) {
+	t.Parallel()
+
+	client := New(WithProtocol(ProtocolHTTP3))
+
+	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com/", nil)
+
+	require.NoError(t, err)
+
+	res, err := client.Do(req)
+
+	require.ErrorIs(t, err, ErrHTTP3ClientRequired)
+	assert.Nil(t, res)
+}
+
+func TestClient_WithHTTP3ClientClonesForRedirectAndJar(t *testing.T) {
+	t.Parallel()
+
+	jar, err := cookiejar.New(nil)
+
+	require.NoError(t, err)
+
+	redirectErr := errors.New("redirects are forbidden")
+
+	h3Client := &http.Client{}
+
+	client := New(
+		WithProtocol(ProtocolHTTP3),
+		WithHTTP3Client(h3Client),
+		WithCookieJar(jar),
+		WithCheckRedirect(func(*http.Request, []*http.Request) error {
+			return redirectErr
+		}),
+	)
+
+	require.NotNil(t, client.config.HTTPClient)
+	assert.NotSame(t, h3Client, client.config.HTTPClient, "Expected the supplied HTTP/3 client to be copied")
+	assert.Same(t, jar, client.config.HTTPClient.Jar)
+	require.NotNil(t, client.config.HTTPClient.CheckRedirect)
+	require.ErrorIs(t, client.config.HTTPClient.CheckRedirect(&http.Request{}, nil), redirectErr)
+	assert.Nil(t, h3Client.Jar, "Expected the supplied HTTP/3 client not to be mutated")
+	assert.Nil(t, h3Client.CheckRedirect, "Expected the supplied HTTP/3 client not to be mutated")
 }

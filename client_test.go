@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,30 +88,6 @@ func TestNew_Options(t *testing.T) {
 
 		require.NotNil(t, client)
 	})
-}
-
-func TestClient_ConfigSnapshot(t *testing.T) {
-	t.Parallel()
-
-	client := hqgohttp.New(
-		hqgohttp.WithTimeout(time.Second),
-		hqgohttp.WithHeader("X-Test", "value"),
-	)
-
-	config := client.Config()
-
-	assert.Equal(t, time.Second, config.Timeout)
-	require.Len(t, config.Headers, 2)
-
-	config.Timeout = 0
-	config.Headers[0].Value = "mutated"
-
-	snapshot := client.Config()
-
-	assert.Equal(t, time.Second, snapshot.Timeout,
-		"Expected the snapshot to be independent of later mutations")
-	assert.NotEqual(t, "mutated", snapshot.Headers[0].Value,
-		"Expected the Headers slice to be copied")
 }
 
 func TestClient_Do(t *testing.T) {
@@ -867,9 +842,11 @@ func TestClient_AttemptTimeout(t *testing.T) {
 
 		var calls atomic.Int32
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if calls.Add(1) == 1 {
-				time.Sleep(200 * time.Millisecond)
+				<-r.Context().Done()
+
+				return
 			}
 
 			_, _ = w.Write([]byte("ok"))
@@ -2757,21 +2734,33 @@ func TestClient_ProtocolHTTP2_h2c(t *testing.T) {
 	assert.Equal(t, protocolTestBody, readProtocolBody(t, res.Body))
 }
 
+type h3RoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f h3RoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
 func TestClient_ProtocolHTTP3(t *testing.T) {
 	t.Parallel()
 
-	url, tlsConfig := newProtocolH3Server(t)
+	h3Client := &http.Client{Transport: h3RoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			Status:     "200 OK",
+			StatusCode: http.StatusOK,
+			Proto:      "HTTP/3.0",
+			ProtoMajor: 3,
+			ProtoMinor: 0,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(protocolTestBody)),
+			Request:    req,
+		}, nil
+	})}
 
 	client := hqgohttp.New(
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP3),
+		hqgohttp.WithHTTP3Client(h3Client),
 		withoutProxy(),
-		hqgohttp.WithTLSConfig(tlsConfig),
 	)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	t.Cleanup(cancel)
-
-	res, err := client.Request().Context(ctx).URL(url).Do()
+	res, err := client.Get("https://example.com/")
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, res.ProtoMajor)
@@ -2781,60 +2770,28 @@ func TestClient_ProtocolHTTP3(t *testing.T) {
 func TestClient_ProtocolAutoHTTP3(t *testing.T) {
 	t.Parallel()
 
-	url, tlsConfig := newProtocolH3Server(t)
+	server := httptest.NewTLSServer(protocolTestHandler())
+
+	t.Cleanup(server.Close)
+
+	h3Client := &http.Client{Transport: h3RoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("h3 unavailable")
+	})}
 
 	client := hqgohttp.New(
 		hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
+		hqgohttp.WithHTTP3Client(h3Client),
+		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
 		withoutProxy(),
-		hqgohttp.WithTLSConfig(tlsConfig),
 	)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	t.Cleanup(cancel)
-
-	res, err := client.Request().Context(ctx).URL(url).Do()
+	res, err := client.Get(server.URL)
 
 	require.NoError(t, err)
-	assert.Equal(t, 3, res.ProtoMajor)
+	assert.NotEqual(t, 3, res.ProtoMajor, "Expected the HTTP/3 failure to fall back to HTTP/1.1+HTTP/2")
 	assert.Equal(t, protocolTestBody, readProtocolBody(t, res.Body))
 }
 
-// newProtocolH3Server starts an HTTP/3 server on a loopback UDP socket and
-// returns its URL plus a TLS configuration that trusts its certificate.
-func newProtocolH3Server(t *testing.T) (url string, tlsConfig *tls.Config) {
-	t.Helper()
-
-	certServer := httptest.NewTLSServer(http.NotFoundHandler())
-
-	t.Cleanup(certServer.Close)
-
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-
-	require.NoError(t, err)
-
-	server := &http3.Server{
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{certServer.TLS.Certificates[0]},
-		},
-		Handler: protocolTestHandler(),
-	}
-
-	go func() {
-		_ = server.Serve(conn)
-	}()
-
-	t.Cleanup(func() {
-		_ = server.Close()
-		_ = conn.Close()
-	})
-
-	url = fmt.Sprintf("https://%s/", conn.LocalAddr().String())
-	tlsConfig = protocolTLSTrust(certServer)
-
-	return url, tlsConfig
-}
-
-// withoutProxy disables environment proxying for the test client.
 func withoutProxy() hqgohttp.ClientOptionFunc {
 	return hqgohttp.WithProxy(func(*http.Request) (*neturl.URL, error) {
 		return nil, nil

@@ -174,6 +174,7 @@ func TestClient_WithTransportBuilderSkipsHTTP3(t *testing.T) {
 
 	New(
 		WithProtocol(ProtocolHTTP3),
+		WithHTTP3Client(&http.Client{}),
 		WithTransportBuilder(func(_ Protocol, transport *http.Transport) *http.Transport {
 			called.Store(true)
 
@@ -238,7 +239,6 @@ func TestClient_TransportPrecedence(t *testing.T) {
 
 			return &url.URL{Scheme: "http", Host: "proxy.example"}, nil
 		}),
-		WithProtocol(ProtocolHTTP3),
 		WithTransportWrapper(func(transport http.RoundTripper) http.RoundTripper {
 			wrapperCalled.Store(true)
 

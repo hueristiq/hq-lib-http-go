@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quic-go/quic-go/http3"
-
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 )
 
@@ -124,19 +122,6 @@ func newHTTP2Client(config *tls.Config) (client *http.Client) {
 
 	client = &http.Client{
 		Transport: transport,
-	}
-
-	return client
-}
-
-// newHTTP3Client builds a client that speaks only HTTP/3. It is declared as a
-// package-level variable so tests can substitute a client with a scripted
-// transport.
-var newHTTP3Client = func(config *tls.Config) (client *http.Client) {
-	client = &http.Client{
-		Transport: &http3.Transport{
-			TLSClientConfig: cloneTLSConfig(config),
-		},
 	}
 
 	return client

@@ -63,8 +63,8 @@
 //
 // Client behavior is set through functional options passed to [New]:
 // [WithContext], [WithTimeout], [WithAttemptTimeout],
-// [WithHTTPClient], [WithTransport], [WithTransportBuilder],
-// [WithHTTP3TransportBuilder], [WithTransportWrapper], [WithDialContext],
+// [WithHTTPClient], [WithHTTP3Client], [WithTransport], [WithTransportBuilder],
+// [WithTransportWrapper], [WithDialContext],
 // [WithDialer], [WithTLSHandshakeTimeout], [WithProxy], [WithCheckRedirect],
 // [WithCookieJar], [WithHeader] (including a User-Agent default),
 // [WithURLParser], [WithRetrier], the retry policy options ([WithRetryPolicy],
@@ -80,11 +80,11 @@
 //
 // [WithHTTPClient] wins over the protocol and transport-building options.
 // [WithTransport] replaces the built transport and bypasses [WithProtocol],
-// [WithTLSConfig], [WithProxy], [WithTransportBuilder],
-// [WithHTTP3TransportBuilder], and [WithTransportWrapper]. For a library-built
-// transport the order is TLS configuration, dial and TLS-handshake settings,
-// [WithTransportBuilder] (or [WithHTTP3TransportBuilder]), [WithProxy], then
-// [WithTransportWrapper].
+// [WithTLSConfig], [WithProxy], [WithTransportBuilder], and
+// [WithTransportWrapper]. For a library-built transport the order is TLS
+// configuration, dial and TLS-handshake settings, [WithTransportBuilder],
+// [WithProxy], then [WithTransportWrapper]. HTTP/3 clients are supplied whole
+// with [WithHTTP3Client] and are not built or decorated by the library.
 //
 // A single request execution overrides the URL parser, the retrier, the rate
 // limiter, the attempt timeout, the retry hook, the per-attempt callbacks, the
@@ -182,9 +182,12 @@
 //   - [ProtocolHTTP1] forces HTTP/1.x.
 //   - [ProtocolHTTP2] forces HTTP/2 over TLS and h2c prior knowledge for
 //     http:// URLs.
-//   - [ProtocolHTTP3] forces HTTP/3. It requires https:// URLs, uses UDP, and
-//     does not honor HTTP proxies; a request to which a proxy applies fails
-//     with [ErrHTTP3ProxyUnsupported] rather than bypassing the proxy.
+//   - [ProtocolHTTP3] forces HTTP/3 through the [WithHTTP3Client] client. It
+//     requires https:// URLs, uses UDP, and does not honor HTTP proxies; a
+//     request to which a proxy applies fails with [ErrHTTP3ProxyUnsupported]
+//     rather than bypassing the proxy. Without an HTTP/3 client, requests fail
+//     with [ErrHTTP3ClientRequired]. [ProtocolAutoHTTP3] without one behaves
+//     as [ProtocolAuto].
 //
 // The proxy that applies is resolved per request from [WithProxy] when
 // supplied, and from the environment otherwise; a selector returning nil
@@ -194,10 +197,9 @@
 // protocol. [WithTransport] supplies a transport directly.
 // [WithTransportBuilder], [WithDialContext], [WithDialer], and
 // [WithTLSHandshakeTimeout] customize library-built HTTP/1.x and HTTP/2
-// transports; [WithHTTP3TransportBuilder] customizes a library-built HTTP/3
-// transport, including its Dial function, QUICConfig, and additional settings.
-// [WithTransportWrapper] decorates any built transport and preserves protocol
-// selection. HTTP/3 ignores the TCP dial and TLS-handshake options. The
+// transports. [WithTransportWrapper] decorates any built transport and
+// preserves protocol selection. An application-supplied HTTP/3 client
+// configures its own transport, dial function, QUIC settings, and TLS. The
 // fallback clients clone the primary client's redirect policy, cookie jar, and
 // timeout.
 //
@@ -246,18 +248,18 @@
 // [ErrRetriesExhausted]. The package exports sentinels for the common failures:
 // [ErrNilRequest], [ErrNilRequestURL], [ErrNoURL], [ErrBodyNotReplayable],
 // [ErrRequestBodyTooLarge], [ErrResponseBodyTooLarge],
-// [ErrHTTP3ProxyUnsupported], [ErrRetriesExhausted], and [ErrClientClosed].
+// [ErrHTTP3ClientRequired], [ErrHTTP3ProxyUnsupported], [ErrRetriesExhausted],
+// and [ErrClientClosed].
 //
 // # Out of scope
 //
 // TLS/browser impersonation is deliberately not supported: it requires a
 // browser-grade TLS stack. Byte-exact raw HTTP exchanges are also out of
 // scope; use the standard library or a dedicated tool. HTTP/1.x and HTTP/2
-// use the standard library; HTTP/3 uses quic-go.
+// use the standard library; HTTP/3 clients are injected by the application.
 //
-// The implementation relies on the Go standard library, plus
-// github.com/quic-go/quic-go/http3 (HTTP/3) and
+// The implementation relies on the Go standard library plus
 // golang.org/x/net/html/charset (UTF-8 conversion). URL parsers, retry engines,
-// and rate limiters are injected by the application, so no dependency on their
-// modules is imposed.
+// rate limiters, and HTTP/3 clients are injected by the application, so no
+// dependency on their modules is imposed.
 package http

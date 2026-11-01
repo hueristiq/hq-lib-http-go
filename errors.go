@@ -33,6 +33,10 @@ var (
 	// errors.Is matches either sentinel.
 	ErrRequestBodyTooLarge = hqgohttprequest.ErrBodyTooLarge
 
+	// ErrHTTP3ClientRequired reports a forced HTTP/3 request when no HTTP/3
+	// client was supplied with [WithHTTP3Client].
+	ErrHTTP3ClientRequired = errors.New("HTTP/3 requires WithHTTP3Client")
+
 	// ErrHTTP3ProxyUnsupported reports a forced HTTP/3 request to which a
 	// proxy applies.
 	ErrHTTP3ProxyUnsupported = errors.New("HTTP/3 does not support proxies")

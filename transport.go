@@ -3,8 +3,6 @@ package http
 import (
 	"net/http"
 	"net/url"
-
-	"github.com/quic-go/quic-go/http3"
 )
 
 // cloneHTTPClient returns a shallow copy of client. It is used before applying
@@ -52,8 +50,29 @@ func (c *Client) applyClientOptions(client *http.Client) (configured *http.Clien
 	return configured
 }
 
+// configureHTTP3Client prepares the application-supplied HTTP/3 client. It is
+// used as-is unless the redirect or cookie-jar option is set, in which case a
+// shallow copy is configured so the caller's client is never mutated.
+//
+// Returns:
+//   - client (*http.Client): the HTTP/3 client to use, or nil when none was
+//     supplied.
+func (c *Client) configureHTTP3Client() (client *http.Client) {
+	client = c.config.HTTP3Client
+	if client == nil {
+		return nil
+	}
+
+	if c.config.checkRedirectSet || c.config.cookieJarSet {
+		client = c.applyClientOptions(cloneHTTPClient(client))
+	}
+
+	return client
+}
+
 // applyProxy sets the proxy selector on transport when the client has one and
-// transport is an [http.Transport]. HTTP/3 transports are left unchanged.
+// transport is an [http.Transport]. Application-supplied HTTP/3 clients are
+// left unchanged.
 //
 // Parameters:
 //   - transport (http.RoundTripper): the transport to configure.
@@ -128,32 +147,6 @@ func (c *Client) configureBuiltTransport(protocol Protocol, transport http.Round
 	}
 
 	return configured
-}
-
-// configureHTTP3Transport applies the HTTP/3 transport builder to a
-// library-built HTTP/3 transport. Other transport types are returned
-// unchanged.
-//
-// Parameters:
-//   - transport (http.RoundTripper): the HTTP/3 transport.
-//
-// Returns:
-//   - configured (http.RoundTripper): the configured transport.
-func (c *Client) configureHTTP3Transport(transport http.RoundTripper) (configured http.RoundTripper) {
-	if c.config.HTTP3TransportBuilder == nil {
-		return transport
-	}
-
-	h3Transport, ok := transport.(*http3.Transport)
-	if !ok {
-		return transport
-	}
-
-	if built := c.config.HTTP3TransportBuilder(h3Transport); built != nil {
-		return built
-	}
-
-	return h3Transport
 }
 
 // configureTransport applies the built-transport settings, the client's proxy,

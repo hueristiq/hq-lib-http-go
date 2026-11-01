@@ -21,7 +21,7 @@ import (
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 )
 
-// RequestOptions holds the per-request overrides of the execution knobs of a
+// requestOptions holds the per-request overrides of the execution knobs of a
 // [Client], populated through [RequestOptionFunc] values passed to
 // [Client.Do], the convenience methods, or [RequestBuilder.WithOptions].
 //
@@ -55,7 +55,7 @@ import (
 //     retried response's body.
 //   - RetryErrorBodyLimit (int64): the maximum number of bytes copied into a
 //     [RetryError] from the final response body. Zero disables body capture.
-type RequestOptions struct {
+type requestOptions struct {
 	AttemptTimeout         time.Duration
 	MaxResponseBodySize    int64
 	MaxRequestBodySize     int64
@@ -76,7 +76,7 @@ type RequestOptions struct {
 // normalize fills invalid values in the request options with their defaults.
 // The request options seed from an already normalized client configuration,
 // so this only guards hand-built executions.
-func (opts *RequestOptions) normalize() {
+func (opts *requestOptions) normalize() {
 	if opts.AttemptTimeout < 0 {
 		opts.AttemptTimeout = 0
 	}
@@ -101,8 +101,8 @@ func (opts *RequestOptions) normalize() {
 // When the same option is supplied more than once, the last one wins.
 //
 // Parameters:
-//   - opts (*RequestOptions): the options bag to mutate.
-type RequestOptionFunc func(opts *RequestOptions)
+//   - opts (*requestOptions): the options bag to mutate.
+type RequestOptionFunc func(opts *requestOptions)
 
 // HeaderField is a single HTTP header field kept in insertion order.
 //
@@ -134,9 +134,9 @@ type headerOp struct {
 //   - ofs (...RequestOptionFunc): the per-request overrides.
 //
 // Returns:
-//   - opts (*RequestOptions): the resolved, normalized configuration.
-func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *RequestOptions) {
-	opts = &RequestOptions{
+//   - opts (*requestOptions): the resolved, normalized configuration.
+func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *requestOptions) {
+	opts = &requestOptions{
 		AttemptTimeout:         c.config.AttemptTimeout,
 		MaxResponseBodySize:    c.config.MaxResponseBodySize,
 		MaxRequestBodySize:     c.config.MaxRequestBodySize,

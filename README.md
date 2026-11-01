@@ -1,6 +1,6 @@
 # hq-lib-http-go
 
-![made with go](https://img.shields.io/badge/made%20with-Go-1E90FF.svg) [![go reference](https://pkg.go.dev/badge/github.com/hueristiq/hq-lib-http-go.svg)](https://pkg.go.dev/github.com/hueristiq/hq-lib-http-go) [![license](https://img.shields.io/badge/license-MIT-gray.svg?color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/blob/main/LICENSE) ![maintenance](https://img.shields.io/badge/maintained%3F-yes-1E90FF.svg) [![open issues](https://img.shields.io/github/issues-raw/hueristiq/hq-lib-http-go.svg?style=flat&color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/issues?q=is:issue+is:open) [![closed issues](https://img.shields.io/github/issues-closed-raw/hueristiq/hq-lib-http-go.svg?style=flat&color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/issues?q=is:issue+is:closed) [![contribution](https://img.shields.io/badge/contributions-welcome-1E90FF.svg)](https://github.com/hueristiq/hq-lib-http-go/blob/main/CONTRIBUTING.md)
+![made with go](https://img.shields.io/badge/made%20with-Go-1E90FF.svg) [![go reference](https://pkg.go.dev/badge/github.com/hueristiq/hq-lib-http-go.svg)](https://pkg.go.dev/github.com/hueristiq/hq-lib-http-go) [![license](https://img.shields.io/badge/license-MIT-gray.svg?color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/blob/main/LICENSE) ![maintenance](https://img.shields.io/badge/maintained%3F-yes-1E90FF.svg) [![open issues](https://img.shields.io/github/issues-raw/hueristiq/hq-lib-http-go.svg?style=flat&color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/issues?q=is:issue+is:open) [![closed issues](https://img.shields.io/github/issues-closed-raw/hueristiq/hq-lib-http-go.svg?style=flat&color=1E90FF)](https://github.com/hueristiq/hq-lib-http-go/issues?q=is:issue+is:closed)
 
 `hq-lib-http-go` is a [Go](https://golang.org/) package for resilient, configurable HTTP communication.
 
@@ -23,7 +23,7 @@
 
 ## Features
 
-- **HTTP/1.1, HTTP/2, and HTTP/3:** `WithProtocol` selects auto negotiation (the default), HTTP/3-first with fallback, or a forced version. HTTP/3 uses quic-go, requires HTTPS over UDP, and does not honor proxies.
+- **HTTP/1.1, HTTP/2, and HTTP/3:** `WithProtocol` selects auto negotiation (the default), HTTP/3-first with fallback, or a forced version. The library ships HTTP/1.1 and HTTP/2; HTTP/3 is a bring-your-own client supplied with `WithHTTP3Client`. HTTP/3 requires HTTPS over UDP and does not honor proxies.
 - **Fluent Request Builder:** Assemble requests with a chainable `Method().URL().Param().SetHeader().AddHeader().Body().Context(ctx).Do()` API.
 - **Client Lifecycle:** `Close` cancels in-flight requests, closes idle connections, and rejects later executions with `ErrClientClosed`.
 - **Typed Request Inputs and Response Helpers:** `JSON`, `XML`, `Form`, and `Multipart` encode bodies and set the matching `Content-Type`; the response `Body` exposes `Bytes`, `String`, `JSON`, `XML`, `UTF8`, `Stream`, `SSE`, and `Close`.
@@ -32,7 +32,7 @@
 - **Typed Retry Errors:** When retries run out, `Do` returns a `*RetryError` with the attempt count, attempt history, status, headers, and the last failure.
 - **Rate-Limiter Hook:** `WithRateLimiter` accepts any limiter with a `Wait(ctx) error` method — for example [hq-lib-limiter-go](https://github.com/hueristiq/hq-lib-limiter-go) — without imposing a module dependency.
 - **URL-Parser Hook:** `WithURLParser` accepts any parser with `Parse(raw) (*url.URL, error)` — for example [hq-lib-url-go](https://github.com/hueristiq/hq-lib-url-go)'s parser adapted with `request.URLParserFunc`.
-- **Transport and Dial Control:** `WithTransport`, `WithTransportBuilder`, `WithHTTP3TransportBuilder`, `WithDialContext`/`WithDialer`, `WithTLSHandshakeTimeout`, `WithTransportWrapper`, `WithProxy`, `WithCheckRedirect`, and `WithCookieJar` cover custom transports, middleware, proxies, redirects, and cookies.
+- **Transport and Dial Control:** `WithTransport`, `WithTransportBuilder`, `WithHTTP3Client`, `WithDialContext`/`WithDialer`, `WithTLSHandshakeTimeout`, `WithTransportWrapper`, `WithProxy`, `WithCheckRedirect`, and `WithCookieJar` cover custom transports, HTTP/3 clients, middleware, proxies, redirects, and cookies.
 
 ## Installation
 
@@ -69,12 +69,18 @@ defer res.Body.Close()
 fmt.Println("Response status:", res.Status)
 ```
 
-`WithProtocol` chooses the HTTP version: `ProtocolAuto` (the default), `ProtocolAutoHTTP3` (HTTP/3 first, fallback to auto), or a forced `ProtocolHTTP1`/`ProtocolHTTP2`/`ProtocolHTTP3`:
+`WithProtocol` chooses the HTTP version: `ProtocolAuto` (the default), `ProtocolAutoHTTP3` (HTTP/3 first, fallback to auto), or a forced `ProtocolHTTP1`/`ProtocolHTTP2`/`ProtocolHTTP3`. HTTP/3 requires an application-supplied client; `ProtocolHTTP3` without one returns `ErrHTTP3ClientRequired`, and `ProtocolAutoHTTP3` without one behaves as `ProtocolAuto`:
 
 ```go
+// The application builds the HTTP/3 client; quic-go is only an example.
+h3Client := &http.Client{Transport: &http3.Transport{
+	TLSClientConfig: &tls.Config{RootCAs: roots},
+}}
+
 client := hqgohttp.New(
 	hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
-	hqgohttp.WithTLSConfig(&tls.Config{RootCAs: roots}),
+	hqgohttp.WithHTTP3Client(h3Client),
+	hqgohttp.WithHTTP3FallbackTTL(time.Minute),
 )
 ```
 
@@ -260,25 +266,13 @@ The returned client stops at the first response (`http.ErrUseLastResponse`), so 
 
 ### Transport and TLS
 
-`WithTransport` replaces the library-built transport; `WithTransportWrapper` decorates it and keeps protocol selection, TLS, and proxy settings. `WithDialContext` (or `WithDialer`) sets the dial function for built HTTP/1.x and HTTP/2 transports, `WithTLSHandshakeTimeout` bounds the handshake, and `WithTransportBuilder` customizes the built `*http.Transport`. HTTP/3 uses its own transport — `WithHTTP3TransportBuilder` customizes it:
+`WithTransport` replaces the library-built transport; `WithTransportWrapper` decorates it and keeps protocol selection, TLS, and proxy settings. `WithDialContext` (or `WithDialer`) sets the dial function for built HTTP/1.x and HTTP/2 transports, `WithTLSHandshakeTimeout` bounds the handshake, and `WithTransportBuilder` customizes the built `*http.Transport`. HTTP/3 is not built by the library: construct the client with your HTTP/3 implementation and pass it whole with `WithHTTP3Client`. Its transport, dial function, QUIC settings, and TLS configuration are owned by the application.
 
-```go
-client := hqgohttp.New(
-	hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
-	hqgohttp.WithHTTP3FallbackTTL(time.Minute),
-	hqgohttp.WithHTTP3TransportBuilder(func(transport *http3.Transport) *http3.Transport {
-		transport.MaxResponseHeaderBytes = 64 << 10
-
-		return transport
-	}),
-)
-```
-
-`WithCheckRedirect` and `WithCookieJar` set the redirect policy and cookie jar; both also apply to a cloned `WithHTTPClient` client.
+`WithCheckRedirect` and `WithCookieJar` set the redirect policy and cookie jar; both also apply to shallow copies of a `WithHTTPClient` or `WithHTTP3Client` client, leaving the caller's client unmodified.
 
 ## Contributing
 
-Contributions are welcome and encouraged! Feel free to submit [Pull Requests](https://github.com/hueristiq/hq-lib-http-go/pulls) or report [Issues](https://github.com/hueristiq/hq-lib-http-go/issues). For more details, check out the [contribution guidelines](https://github.com/hueristiq/hq-lib-http-go/blob/main/CONTRIBUTING.md).
+Contributions are welcome and encouraged! Feel free to submit [Pull Requests](https://github.com/hueristiq/hq-lib-http-go/pulls) or report [Issues](https://github.com/hueristiq/hq-lib-http-go/issues).
 
 A big thank you to all the [contributors](https://github.com/hueristiq/hq-lib-http-go/graphs/contributors) for their ongoing support!
 

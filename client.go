@@ -10,13 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/quic-go/quic-go/http3"
 
 	hqgohttpheader "github.com/hueristiq/hq-lib-http-go/header"
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
@@ -42,14 +39,16 @@ import (
 // value is not usable.
 //
 // Fields:
-//   - config (ClientOptions): the resolved configuration. It is private and
+//   - config (clientOptions): the resolved configuration. It is private and
 //     immutable after [New]; use [Client.Config] to inspect it.
 //   - fallbackHTTPClient (*http.Client): the fallback client, nil when the
 //     selected protocol has no fallback.
 //   - fallbackOnHTTP3 (bool): whether fallback errors are HTTP/3 transport
 //     errors rather than the HTTP/1.x-broken error.
-//   - http3Primary (bool): whether the primary client speaks HTTP/3. It is
-//     false when a custom client or transport supplies the protocol.
+//   - http3Primary (bool): whether the primary client is the
+//     application-supplied HTTP/3 client. It is false when a custom
+//     [WithHTTPClient] client supplies the protocol or when no HTTP/3 client was
+//     configured.
 //   - http3Failures (sync.Map): hosts that recently failed an HTTP/3 attempt,
 //     mapped to the failure time. Used by [ProtocolAutoHTTP3] to skip HTTP/3
 //     for the configured TTL. Expired entries are pruned periodically.
@@ -64,7 +63,7 @@ import (
 //   - closeCancel (context.CancelCauseFunc): cancels closeCtx with
 //     [ErrClientClosed].
 type Client struct {
-	config ClientOptions
+	config clientOptions
 
 	fallbackHTTPClient *http.Client
 	fallbackOnHTTP3    bool
@@ -233,15 +232,19 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 	return res, err
 }
 
-// ClientOptions holds the configurable knobs of a [Client], populated through
-// [ClientOptionFunc] values passed to [New]. The resolved configuration is
-// private to the client and immutable after construction; use [Client.Config]
-// to inspect a snapshot.
+// clientOptions holds the configurable knobs of a [Client], populated through
+// [ClientOptionFunc] values passed to [New]. The resolved configuration stays
+// private to the client and immutable after construction.
 //
 // Fields:
 //   - HTTPClient (*http.Client): the underlying client executing requests. Nil
 //     means a client is built from Protocol, TLSConfig, Transport, and the
 //     transport controls.
+//   - HTTP3Client (*http.Client): the application-supplied HTTP/3 client used by
+//     [ProtocolHTTP3] and as the HTTP/3 primary of [ProtocolAutoHTTP3]. Nil
+//     leaves HTTP/3 unimplemented: forced HTTP/3 fails with
+//     [ErrHTTP3ClientRequired], and [ProtocolAutoHTTP3] behaves as
+//     [ProtocolAuto].
 //   - Protocol (Protocol): the HTTP protocol mode. The zero value is
 //     [ProtocolAuto].
 //   - HTTP3FallbackTTL (time.Duration): how long a host that failed an HTTP/3
@@ -313,23 +316,22 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 //     [RetryError] from the final response body. Zero disables body capture; a
 //     negative value is normalized to zero.
 //   - TransportBuilder (TransportBuilder): customizes a library-built
-//     *http.Transport. Ignored when Transport is set; HTTP/3 is not passed to it.
-//   - HTTP3TransportBuilder (HTTP3TransportBuilder): customizes a library-built
-//     *http3.Transport. Ignored when Transport is set.
+//     *http.Transport. Ignored when Transport is set; HTTP/3 clients are
+//     application-supplied and never reach it.
 //   - DialContext (func(context.Context, string, string) (net.Conn, error)):
 //     the dial function applied to library-built *http.Transport values.
 //   - TLSHandshakeTimeout (time.Duration): the TLS handshake timeout applied to
 //     library-built *http.Transport values when the corresponding unexported
 //     flag is set.
-type ClientOptions struct {
+type clientOptions struct {
 	HTTPClient                 *http.Client
+	HTTP3Client                *http.Client
 	Protocol                   Protocol
 	HTTP3FallbackTTL           time.Duration
 	TLSConfig                  *tls.Config
 	Transport                  http.RoundTripper
 	TransportWrapper           func(http.RoundTripper) http.RoundTripper
 	TransportBuilder           TransportBuilder
-	HTTP3TransportBuilder      HTTP3TransportBuilder
 	DialContext                func(ctx context.Context, network, address string) (net.Conn, error)
 	TLSHandshakeTimeout        time.Duration
 	tlsHandshakeTimeoutSet     bool
@@ -362,7 +364,7 @@ type ClientOptions struct {
 
 // normalize fills invalid values in the client options with their defaults,
 // so a misconfigured client still behaves sanely.
-func (opts *ClientOptions) normalize() {
+func (opts *clientOptions) normalize() {
 	if opts.Protocol < ProtocolAuto || opts.Protocol > ProtocolHTTP3 {
 		opts.Protocol = ProtocolAuto
 	}
@@ -405,8 +407,8 @@ func (opts *ClientOptions) normalize() {
 // When the same option is supplied more than once, the last one wins.
 //
 // Parameters:
-//   - opts (*ClientOptions): the options bag to mutate.
-type ClientOptionFunc func(opts *ClientOptions)
+//   - opts (*clientOptions): the options bag to mutate.
+type ClientOptionFunc func(opts *clientOptions)
 
 // New creates a [Client] configured by the given options.
 //
@@ -422,7 +424,8 @@ type ClientOptionFunc func(opts *ClientOptions)
 // cap, and [DefaultHTTP3FallbackTTL] for the HTTP/3 failure cache. A
 // library-built client uses HTTP/1.x and HTTP/2 with environment proxying and
 // no cookie jar; [WithTransport], [WithProxy], [WithCheckRedirect], and
-// [WithCookieJar] change that. Invalid values are normalized the same way —
+// [WithCookieJar] change that. HTTP/3 is not built by the library: supply a
+// client with [WithHTTP3Client]. Invalid values are normalized the same way —
 // see each option's documentation.
 //
 // Parameters:
@@ -431,7 +434,7 @@ type ClientOptionFunc func(opts *ClientOptions)
 // Returns:
 //   - client (*Client): a new client, ready to execute requests.
 func New(ofs ...ClientOptionFunc) (client *Client) {
-	opts := &ClientOptions{
+	opts := &clientOptions{
 		Headers:             []HeaderField{{Key: hqgohttpheader.UserAgent.String(), Value: DefaultUserAgent}},
 		Timeout:             DefaultTimeout,
 		ResponseBodyTimeout: DefaultResponseBodyTimeout,
@@ -463,20 +466,6 @@ func New(ofs ...ClientOptionFunc) (client *Client) {
 	return client
 }
 
-// Config returns a snapshot of the configuration resolved by [New].
-//
-// Mutating the snapshot does not affect the client. The Headers slice is
-// copied; pointer, interface, and context fields are shared.
-//
-// Returns:
-//   - options (ClientOptions): the resolved configuration.
-func (c *Client) Config() (options ClientOptions) {
-	options = c.config
-	options.Headers = slices.Clone(c.config.Headers)
-
-	return options
-}
-
 // WithHTTPClient returns a [ClientOptionFunc] that sets the underlying client
 // executing requests.
 //
@@ -500,9 +489,37 @@ func (c *Client) Config() (options ClientOptions) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the httpClient field.
 func WithHTTPClient(client *http.Client) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if client != nil {
 			opts.HTTPClient = client
+		}
+	}
+}
+
+// WithHTTP3Client returns a [ClientOptionFunc] that registers the
+// application-supplied HTTP/3 client used by [ProtocolHTTP3] and as the HTTP/3
+// primary of [ProtocolAutoHTTP3]. The library does not build an HTTP/3
+// transport and imposes no QUIC dependency; the caller constructs the client
+// with an HTTP/3 implementation such as quic-go and configures its transport,
+// TLS settings, dialer, and QUIC parameters.
+//
+// [WithCheckRedirect] and [WithCookieJar] apply to a shallow copy of the
+// client, so the caller's client is never mutated. [WithTransport],
+// [WithTransportWrapper], [WithTransportBuilder], [WithProxy], and
+// [WithTLSConfig] do not configure it. With no HTTP/3 client,
+// [ProtocolHTTP3] requests fail with [ErrHTTP3ClientRequired] and
+// [ProtocolAutoHTTP3] behaves as [ProtocolAuto].
+//
+// Parameters:
+//   - client (*http.Client): the HTTP/3 client. Nil is ignored, leaving HTTP/3
+//     unimplemented.
+//
+// Returns:
+//   - f (ClientOptionFunc): a functional option that sets the http3Client field.
+func WithHTTP3Client(client *http.Client) (f ClientOptionFunc) {
+	return func(opts *clientOptions) {
+		if client != nil {
+			opts.HTTP3Client = client
 		}
 	}
 }
@@ -526,7 +543,7 @@ func WithHTTPClient(client *http.Client) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that registers the header.
 func WithHeader(key, value string) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if key == "" {
 			return
 		}
@@ -563,7 +580,7 @@ func WithHeader(key, value string) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the timeout field.
 func WithTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.Timeout = timeout
 	}
 }
@@ -585,7 +602,7 @@ func WithTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the defaultCtx field.
 func WithContext(ctx context.Context) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.DefaultContext = ctx
 	}
 }
@@ -608,7 +625,7 @@ func WithContext(ctx context.Context) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     responseBodyTimeout field.
 func WithResponseBodyTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.ResponseBodyTimeout = timeout
 	}
 }
@@ -632,7 +649,7 @@ func WithResponseBodyTimeout(timeout time.Duration) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxResponseBodySize field.
 func WithMaxResponseBodySize(maxResponseBodySize int64) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.MaxResponseBodySize = maxResponseBodySize
 	}
 }
@@ -657,7 +674,7 @@ func WithMaxResponseBodySize(maxResponseBodySize int64) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxRequestBodySize field.
 func WithMaxRequestBodySize(maxRequestBodySize int64) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.MaxRequestBodySize = maxRequestBodySize
 	}
 }
@@ -683,7 +700,7 @@ func WithMaxRequestBodySize(maxRequestBodySize int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the attemptTimeout field.
 func WithAttemptTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if timeout > 0 {
 			opts.AttemptTimeout = timeout
 		} else {
@@ -707,7 +724,7 @@ func WithAttemptTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retryPolicy field.
 func WithRetryPolicy(retryPolicy RetryPolicy) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.RetryPolicy = retryPolicy
 	}
 }
@@ -730,7 +747,7 @@ func WithRetryPolicy(retryPolicy RetryPolicy) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the idempotentRetries field.
 func WithRetryIdempotent(enabled bool) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.IdempotentRetries = enabled
 	}
 }
@@ -751,7 +768,7 @@ func WithRetryIdempotent(enabled bool) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the rateLimiter field.
 func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.RateLimiter = rateLimiter
 	}
 }
@@ -775,7 +792,7 @@ func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retrier field.
 func WithRetrier(retrier Retrier) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.Retrier = retrier
 	}
 }
@@ -797,7 +814,7 @@ func WithRetrier(retrier Retrier) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the urlParser field.
 func WithURLParser(parser hqgohttprequest.URLParser) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if parser != nil {
 			opts.URLParser = parser
 		}
@@ -821,7 +838,7 @@ func WithURLParser(parser hqgohttprequest.URLParser) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onRequest field.
 func WithOnRequest(onRequest OnRequestFunc) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.OnRequest = onRequest
 	}
 }
@@ -847,7 +864,7 @@ func WithOnRequest(onRequest OnRequestFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onResponse field.
 func WithOnResponse(onResponse OnResponseFunc) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.OnResponse = onResponse
 	}
 }
@@ -867,7 +884,7 @@ func WithOnResponse(onResponse OnResponseFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onRetry field.
 func WithOnRetry(onRetry OnRetryFunc) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.OnRetry = onRetry
 	}
 }
@@ -888,7 +905,7 @@ func WithOnRetry(onRetry OnRetryFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the prepareRetry field.
 func WithPrepareRetry(prepareRetry PrepareRetryFunc) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if prepareRetry != nil {
 			opts.PrepareRetry = prepareRetry
 		}
@@ -916,7 +933,7 @@ func WithPrepareRetry(prepareRetry PrepareRetryFunc) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     retryExhaustionHandler field.
 func WithOnRetryExhaustion(handler RetryExhaustionHandler) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.RetryExhaustionHandler = handler
 	}
 }
@@ -936,7 +953,7 @@ func WithOnRetryExhaustion(handler RetryExhaustionHandler) (f ClientOptionFunc) 
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxRequestsBeforeIdleClose field.
 func WithMaxRequestsBeforeIdleClose(n int) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.MaxRequestsBeforeIdleClose = n
 	}
 }
@@ -956,7 +973,7 @@ func WithMaxRequestsBeforeIdleClose(n int) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the responseReadLimit field.
 func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.ResponseReadLimit = responseReadLimit
 	}
 }
@@ -979,7 +996,7 @@ func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retryErrorBodyLimit field.
 func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.RetryErrorBodyLimit = retryErrorBodyLimit
 	}
 }
@@ -999,7 +1016,7 @@ func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the retrier field.
 func WithRequestRetrier(retrier Retrier) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		opts.Retrier = retrier
 	}
 }
@@ -1020,7 +1037,7 @@ func WithRequestRetrier(retrier Retrier) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the urlParser field.
 func WithRequestURLParser(parser hqgohttprequest.URLParser) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if parser != nil {
 			opts.URLParser = parser
 		}
@@ -1037,7 +1054,7 @@ func WithRequestURLParser(parser hqgohttprequest.URLParser) (f RequestOptionFunc
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the retryPolicy field.
 func WithRequestRetryPolicy(retryPolicy RetryPolicy) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if retryPolicy != nil {
 			opts.RetryPolicy = retryPolicy
 		}
@@ -1055,7 +1072,7 @@ func WithRequestRetryPolicy(retryPolicy RetryPolicy) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the idempotentRetries field.
 func WithRequestRetryIdempotent(enabled bool) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		opts.IdempotentRetries = enabled
 	}
 }
@@ -1072,7 +1089,7 @@ func WithRequestRetryIdempotent(enabled bool) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the rateLimiter field.
 func WithRequestRateLimiter(rateLimiter RateLimiter) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if rateLimiter != nil {
 			opts.RateLimiter = rateLimiter
 		}
@@ -1089,7 +1106,7 @@ func WithRequestRateLimiter(rateLimiter RateLimiter) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onRequest field.
 func WithRequestOnRequest(onRequest OnRequestFunc) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if onRequest != nil {
 			opts.OnRequest = onRequest
 		}
@@ -1106,7 +1123,7 @@ func WithRequestOnRequest(onRequest OnRequestFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onResponse field.
 func WithRequestOnResponse(onResponse OnResponseFunc) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if onResponse != nil {
 			opts.OnResponse = onResponse
 		}
@@ -1123,7 +1140,7 @@ func WithRequestOnResponse(onResponse OnResponseFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onRetry field.
 func WithRequestOnRetry(onRetry OnRetryFunc) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if onRetry != nil {
 			opts.OnRetry = onRetry
 		}
@@ -1140,7 +1157,7 @@ func WithRequestOnRetry(onRetry OnRetryFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the prepareRetry field.
 func WithRequestPrepareRetry(prepareRetry PrepareRetryFunc) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if prepareRetry != nil {
 			opts.PrepareRetry = prepareRetry
 		}
@@ -1158,7 +1175,7 @@ func WithRequestPrepareRetry(prepareRetry PrepareRetryFunc) (f RequestOptionFunc
 //   - f (RequestOptionFunc): a functional option that sets the
 //     retryExhaustionHandler field.
 func WithRequestOnRetryExhaustion(handler RetryExhaustionHandler) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if handler != nil {
 			opts.RetryExhaustionHandler = handler
 		}
@@ -1179,7 +1196,7 @@ func WithRequestOnRetryExhaustion(handler RetryExhaustionHandler) (f RequestOpti
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the attemptTimeout field.
 func WithRequestAttemptTimeout(timeout time.Duration) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if timeout > 0 {
 			opts.AttemptTimeout = timeout
 		} else {
@@ -1200,7 +1217,7 @@ func WithRequestAttemptTimeout(timeout time.Duration) (f RequestOptionFunc) {
 //   - f (RequestOptionFunc): a functional option that sets the
 //     maxResponseBodySize field.
 func WithRequestMaxResponseBodySize(maxResponseBodySize int64) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if maxResponseBodySize >= 0 {
 			opts.MaxResponseBodySize = maxResponseBodySize
 		}
@@ -1218,7 +1235,7 @@ func WithRequestMaxResponseBodySize(maxResponseBodySize int64) (f RequestOptionF
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the responseReadLimit field.
 func WithRequestResponseReadLimit(responseReadLimit int64) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if responseReadLimit > 0 {
 			opts.ResponseReadLimit = responseReadLimit
 		}
@@ -1237,7 +1254,7 @@ func WithRequestResponseReadLimit(responseReadLimit int64) (f RequestOptionFunc)
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the retryErrorBodyLimit field.
 func WithRequestRetryErrorBodyLimit(retryErrorBodyLimit int64) (f RequestOptionFunc) {
-	return func(opts *RequestOptions) {
+	return func(opts *requestOptions) {
 		if retryErrorBodyLimit >= 0 {
 			opts.RetryErrorBodyLimit = retryErrorBodyLimit
 		}
@@ -1247,10 +1264,11 @@ func WithRequestRetryErrorBodyLimit(retryErrorBodyLimit int64) (f RequestOptionF
 // WithProtocol returns a [ClientOptionFunc] that selects the HTTP protocol
 // mode. The zero value, [ProtocolAuto], is the default.
 //
-// When [WithHTTPClient] or [WithTransport] is also supplied, that client or
-// transport takes precedence and the protocol mode is ignored. Use
-// [WithTransportWrapper] to decorate a protocol-built transport without
-// losing the selection.
+// [WithHTTPClient] takes precedence and the protocol mode is ignored.
+// [WithTransport] applies to library-built HTTP/1.x and HTTP/2 transports; it
+// does not configure the HTTP/3 client, which is supplied whole with
+// [WithHTTP3Client]. Use [WithTransportWrapper] to decorate a protocol-built
+// transport without losing the selection.
 //
 // HTTP/3 does not support proxies. [ProtocolAutoHTTP3] sends a request to
 // which a proxy applies through the auto client instead, and [ProtocolHTTP3]
@@ -1263,7 +1281,7 @@ func WithRequestRetryErrorBodyLimit(retryErrorBodyLimit int64) (f RequestOptionF
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the protocol field.
 func WithProtocol(protocol Protocol) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.Protocol = protocol
 	}
 }
@@ -1271,7 +1289,8 @@ func WithProtocol(protocol Protocol) (f ClientOptionFunc) {
 // WithHTTP3FallbackTTL returns a [ClientOptionFunc] that sets how long a host
 // whose HTTP/3 attempt failed is sent through the HTTP/1.1+HTTP/2 client
 // before HTTP/3 is tried again. The cache applies only to
-// [ProtocolAutoHTTP3]; forced HTTP/3 still tries HTTP/3 on every request.
+// [ProtocolAutoHTTP3] with an HTTP/3 client configured through
+// [WithHTTP3Client]; forced HTTP/3 still tries HTTP/3 on every request.
 //
 // A host that succeeds over HTTP/3 is removed from the cache immediately. A
 // non-positive value disables the cache, restoring a fresh HTTP/3 attempt per
@@ -1284,7 +1303,7 @@ func WithProtocol(protocol Protocol) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     http3FallbackTTL field.
 func WithHTTP3FallbackTTL(ttl time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.HTTP3FallbackTTL = ttl
 	}
 }
@@ -1505,12 +1524,12 @@ func (c *Client) Do(req *hqgohttprequest.Request, ofs ...RequestOptionFunc) (res
 //
 // Parameters:
 //   - req (*hqgohttprequest.Request): the request to execute.
-//   - opts (*RequestOptions): the resolved per-request configuration.
+//   - opts (*requestOptions): the resolved per-request configuration.
 //
 // Returns:
 //   - res (*Response): the wrapped response, or nil on failure.
 //   - err (error): non-nil when the execution fails.
-func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *RequestOptions) (res *Response, err error) {
+func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *requestOptions) (res *Response, err error) {
 	raw, doErr := c.do(req, opts) //nolint:bodyclose // The response body is handed to the caller.
 	if raw == nil {
 		return nil, doErr
@@ -1524,12 +1543,12 @@ func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *RequestOptions) (
 //
 // Parameters:
 //   - req (*hqgohttprequest.Request): the request to execute.
-//   - opts (*RequestOptions): the resolved per-request configuration.
+//   - opts (*requestOptions): the resolved per-request configuration.
 //
 // Returns:
 //   - res (*http.Response): the raw response, or nil on failure.
 //   - err (error): non-nil when the execution fails.
-func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *http.Response, err error) {
+func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *http.Response, err error) {
 	if req == nil || req.Request == nil {
 		err = fmt.Errorf("http.Client.Do: %w", ErrNilRequest)
 
@@ -1544,6 +1563,12 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *ht
 
 	if c.closed.Load() {
 		err = fmt.Errorf("http.Client.Do: %w", ErrClientClosed)
+
+		return nil, err
+	}
+
+	if c.config.HTTPClient == nil {
+		err = fmt.Errorf("http.Client.Do: %w", ErrHTTP3ClientRequired)
 
 		return nil, err
 	}
@@ -2294,7 +2319,7 @@ func NewMultipartForm() (form *MultipartForm) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the transport field.
 func WithTransport(transport http.RoundTripper) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if transport != nil {
 			opts.Transport = transport
 		}
@@ -2321,7 +2346,7 @@ func WithTransport(transport http.RoundTripper) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     transportWrapper field.
 func WithTransportWrapper(wrapper func(http.RoundTripper) http.RoundTripper) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if wrapper != nil {
 			opts.TransportWrapper = wrapper
 		}
@@ -2342,8 +2367,7 @@ type TransportBuilder func(protocol Protocol, transport *http.Transport) *http.T
 // selected protocol and the configured transport.
 //
 // It is ignored when [WithHTTPClient] or [WithTransport] supplies the
-// transport. HTTP/3 is not an [*http.Transport] and is not passed to the
-// builder.
+// transport. Application-supplied HTTP/3 clients never reach the builder.
 //
 // Parameters:
 //   - builder (TransportBuilder): the builder. Nil is ignored; a builder that
@@ -2353,39 +2377,9 @@ type TransportBuilder func(protocol Protocol, transport *http.Transport) *http.T
 //   - f (ClientOptionFunc): a functional option that sets the
 //     transportBuilder field.
 func WithTransportBuilder(builder TransportBuilder) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if builder != nil {
 			opts.TransportBuilder = builder
-		}
-	}
-}
-
-// HTTP3TransportBuilder customizes a library-built HTTP/3 transport. It
-// receives the transport the library built and returns the transport to use.
-// Returning nil keeps the input unchanged.
-//
-// It is the supported escape hatch for settings the client options do not
-// expose, including http3.Transport.Dial, QUICConfig, AdditionalSettings, and
-// MaxResponseHeaderBytes. WithDialContext and WithDialer remain TCP-only and do
-// not apply to HTTP/3.
-type HTTP3TransportBuilder func(transport *http3.Transport) *http3.Transport
-
-// WithHTTP3TransportBuilder returns a [ClientOptionFunc] that customizes the
-// library-built HTTP/3 transport. It applies to [ProtocolHTTP3] and the HTTP/3
-// primary of [ProtocolAutoHTTP3]. It is ignored when [WithHTTPClient] or
-// [WithTransport] supplies the transport.
-//
-// Parameters:
-//   - builder (HTTP3TransportBuilder): the builder. Nil is ignored; a builder
-//     that returns nil keeps the transport unchanged.
-//
-// Returns:
-//   - f (ClientOptionFunc): a functional option that sets the
-//     http3TransportBuilder field.
-func WithHTTP3TransportBuilder(builder HTTP3TransportBuilder) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
-		if builder != nil {
-			opts.HTTP3TransportBuilder = builder
 		}
 	}
 }
@@ -2394,8 +2388,8 @@ func WithHTTP3TransportBuilder(builder HTTP3TransportBuilder) (f ClientOptionFun
 // by library-built HTTP/1.x and HTTP/2 transports. It supports custom
 // resolvers, connect-to dialing, interface binding, and Unix sockets.
 //
-// It is ignored when [WithHTTPClient] or [WithTransport] is supplied, and the
-// HTTP/3 transport does not use it.
+// It is ignored when [WithHTTPClient] or [WithTransport] is supplied.
+// Application-supplied HTTP/3 clients configure their own dial function.
 //
 // Parameters:
 //   - dialContext (func(context.Context, string, string) (net.Conn, error)):
@@ -2404,7 +2398,7 @@ func WithHTTP3TransportBuilder(builder HTTP3TransportBuilder) (f ClientOptionFun
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the dialContext field.
 func WithDialContext(dialContext func(ctx context.Context, network, address string) (net.Conn, error)) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if dialContext != nil {
 			opts.DialContext = dialContext
 		}
@@ -2420,7 +2414,7 @@ func WithDialContext(dialContext func(ctx context.Context, network, address stri
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the dialContext field.
 func WithDialer(dialer *net.Dialer) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if dialer != nil {
 			opts.DialContext = dialer.DialContext
 		}
@@ -2441,7 +2435,7 @@ func WithDialer(dialer *net.Dialer) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     tlsHandshakeTimeout field.
 func WithTLSHandshakeTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if timeout < 0 {
 			timeout = 0
 		}
@@ -2471,7 +2465,7 @@ func WithTLSHandshakeTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the proxy field.
 func WithProxy(proxy func(*http.Request) (*url.URL, error)) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		if proxy != nil {
 			opts.Proxy = proxy
 		}
@@ -2495,7 +2489,7 @@ func WithProxy(proxy func(*http.Request) (*url.URL, error)) (f ClientOptionFunc)
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the checkRedirect field.
 func WithCheckRedirect(checkRedirect func(*http.Request, []*http.Request) error) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.CheckRedirect = checkRedirect
 		opts.checkRedirectSet = true
 	}
@@ -2513,7 +2507,7 @@ func WithCheckRedirect(checkRedirect func(*http.Request, []*http.Request) error)
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the cookieJar field.
 func WithCookieJar(cookieJar http.CookieJar) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.CookieJar = cookieJar
 		opts.cookieJarSet = true
 	}
@@ -2536,7 +2530,7 @@ func WithCookieJar(cookieJar http.CookieJar) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the tlsConfig field.
 func WithTLSConfig(config *tls.Config) (f ClientOptionFunc) {
-	return func(opts *ClientOptions) {
+	return func(opts *clientOptions) {
 		opts.TLSConfig = config
 	}
 }
@@ -2581,8 +2575,10 @@ const (
 // Protocol selects the HTTP version used by a [Client].
 //
 // The zero value, [ProtocolAuto], negotiates HTTP/2 over TLS and falls back to
-// HTTP/1.1. The explicit modes force one protocol; [ProtocolAutoHTTP3] tries
-// HTTP/3 first and falls back to [ProtocolAuto].
+// HTTP/1.1. The explicit modes force one protocol. HTTP/3 modes use the
+// application-supplied client from [WithHTTP3Client]; without one,
+// [ProtocolAutoHTTP3] behaves as [ProtocolAuto] and [ProtocolHTTP3] fails with
+// [ErrHTTP3ClientRequired].
 type Protocol int
 
 const (
@@ -2590,17 +2586,19 @@ const (
 	// Cleartext HTTP/2 servers that answer an HTTP/1.x request with HTTP/2
 	// frames are retried once on an h2c fallback.
 	ProtocolAuto Protocol = iota
-	// ProtocolAutoHTTP3 tries HTTP/3 first and falls back to [ProtocolAuto] on
-	// a transient transport error. A response paired with an error is final,
-	// and permanent failures are not retried on another protocol.
+	// ProtocolAutoHTTP3 tries the [WithHTTP3Client] client first and falls back
+	// to [ProtocolAuto] on a transient transport error. Without an HTTP/3
+	// client it behaves as [ProtocolAuto]. A response paired with an error is
+	// final, and permanent failures are not retried on another protocol.
 	ProtocolAutoHTTP3
 	// ProtocolHTTP1 forces HTTP/1.0 or HTTP/1.1.
 	ProtocolHTTP1
 	// ProtocolHTTP2 forces HTTP/2, including h2c prior knowledge for http://
 	// URLs.
 	ProtocolHTTP2
-	// ProtocolHTTP3 forces HTTP/3. It requires https:// URLs, uses UDP, and
-	// does not honor HTTP proxies.
+	// ProtocolHTTP3 forces HTTP/3 through the [WithHTTP3Client] client. It
+	// requires https:// URLs, uses UDP, and does not honor HTTP proxies. Without
+	// an HTTP/3 client, requests fail with [ErrHTTP3ClientRequired].
 	ProtocolHTTP3
 )
 
@@ -2629,7 +2627,8 @@ func (p Protocol) String() (protocol string) {
 
 // DefaultHTTP3FallbackTTL is how long a host that failed an HTTP/3 attempt is
 // sent through the HTTP/1.1+HTTP/2 client in [ProtocolAutoHTTP3] before HTTP/3
-// is tried again.
+// is tried again. It applies only when an HTTP/3 client is configured with
+// [WithHTTP3Client].
 const DefaultHTTP3FallbackTTL = time.Minute
 
 // buildHTTPClients selects the primary and fallback clients for the
@@ -2658,26 +2657,20 @@ func (c *Client) buildHTTPClients() {
 		c.config.HTTPClient.Transport = c.configureTransport(c.config.Protocol, c.config.HTTPClient.Transport)
 		c.applyClientOptions(c.config.HTTPClient)
 	case ProtocolHTTP3:
-		c.config.HTTPClient = newHTTP3Client(c.config.TLSConfig)
-
-		if c.config.Transport == nil {
-			c.config.HTTPClient.Transport = c.configureHTTP3Transport(c.config.HTTPClient.Transport)
+		if c.config.HTTP3Client == nil {
+			return
 		}
 
-		c.config.HTTPClient.Transport = c.configureTransport(c.config.Protocol, c.config.HTTPClient.Transport)
-		c.applyClientOptions(c.config.HTTPClient)
-		c.http3Primary = c.config.Transport == nil
+		c.config.HTTPClient = c.configureHTTP3Client()
+		c.http3Primary = true
 	case ProtocolAutoHTTP3:
-		if c.config.Transport != nil {
+		if c.config.HTTP3Client == nil {
 			c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
 
 			return
 		}
 
-		c.config.HTTPClient = newHTTP3Client(c.config.TLSConfig)
-		c.config.HTTPClient.Transport = c.configureHTTP3Transport(c.config.HTTPClient.Transport)
-		c.config.HTTPClient.Transport = c.applyTransportWrapper(c.config.HTTPClient.Transport)
-		c.applyClientOptions(c.config.HTTPClient)
+		c.config.HTTPClient = c.configureHTTP3Client()
 		c.fallbackHTTPClient = c.buildAutoClient()
 		c.fallbackOnHTTP3 = true
 		c.http3Primary = true
