@@ -4,74 +4,85 @@
 
 `hq-lib-http-go` is a [Go](https://golang.org/) package for resilient, configurable HTTP communication.
 
-## Table of Contents
+## Resources
 
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
 	- [Client](#client)
-	- [Fluent Request Builder](#fluent-request-builder)
-	- [Response Handling](#response-handling)
+	- [Fluent request builder](#fluent-request-builder)
+	- [Response handling](#response-handling)
 	- [Retries](#retries)
-	- [Rate Limiting](#rate-limiting)
-	- [URL Parser Hook](#url-parser-hook)
-	- [Retrier Hook](#retrier-hook)
+	- [Rate limiting](#rate-limiting)
+	- [URL parser hook](#url-parser-hook)
 	- [Logging](#logging)
-	- [Standard Client Adapter](#standard-client-adapter)
+	- [Standard client adapter](#standard-client-adapter)
 	- [Transport and TLS](#transport-and-tls)
 - [Contributing](#contributing)
 - [Licensing](#licensing)
 
 ## Features
 
-- **HTTP/1.1, HTTP/2, and HTTP/3:** `WithProtocol` selects auto negotiation (the default), HTTP/3-first with fallback, or a forced version. The library ships HTTP/1.1 and HTTP/2; HTTP/3 is a bring-your-own client supplied with `WithHTTP3Client`. HTTP/3 requires HTTPS over UDP and does not honor proxies.
-- **Fluent Request Builder:** Assemble requests with a chainable `Method().URL().Param().SetHeader().AddHeader().Body().Context(ctx).Do()` API.
-- **Client Lifecycle:** `Close` cancels in-flight requests, closes idle connections, and rejects later executions with `ErrClientClosed`.
-- **Typed Request Inputs and Response Helpers:** `JSON`, `XML`, `Form`, and `Multipart` encode bodies and set the matching `Content-Type`; the response `Body` exposes `Bytes`, `String`, `JSON`, `XML`, `UTF8`, `Stream`, `SSE`, and `Close`.
-- **Idempotent-by-Default Retries:** The default policy retries connection and transport errors, `408`, `429`, and `5xx` responses, and skips permanent failures such as NXDOMAIN. Only idempotent methods are retried by default.
-- **Retrier Hook:** `WithRetrier` accepts any engine with a `Retry` method — for example [hq-lib-retrier-go](https://github.com/hueristiq/hq-lib-retrier-go) adapted with `RetrierFunc` — without imposing a module dependency.
-- **Logger Hook:** `WithLogger` accepts any slog-compatible logger; a `*slog.Logger` works directly, and hq-lib-logger-go plugs in through its `SlogHandler`. Use `WithRequestLogger` for a single execution.
-- **Typed Retry Errors:** When retries run out, `Do` returns a `*RetryError` with the attempt count, attempt history, status, headers, and the last failure.
-- **Rate-Limiter Hook:** `WithRateLimiter` accepts any limiter with a `Wait(ctx) error` method — for example [hq-lib-limiter-go](https://github.com/hueristiq/hq-lib-limiter-go) — without imposing a module dependency.
-- **URL-Parser Hook:** `WithURLParser` accepts any parser with `Parse(raw) (*url.URL, error)` — for example [hq-lib-url-go](https://github.com/hueristiq/hq-lib-url-go)'s parser adapted with `request.URLParserFunc`.
-- **Transport and Dial Control:** `WithTransport`, `WithTransportBuilder`, `WithHTTP3Client`, `WithDialContext`/`WithDialer`, `WithTLSHandshakeTimeout`, `WithTransportWrapper`, `WithProxy`, `WithCheckRedirect`, and `WithCookieJar` cover custom transports, HTTP/3 clients, middleware, proxies, redirects, and cookies.
+- **HTTP/1.1, HTTP/2, and HTTP/3:** `WithProtocol` selects auto negotiation, HTTP/3-first fallback, or a forced version; HTTP/3 uses an application-supplied client.
+- **Fluent request builder:** `Request` chains `Method`, `URL`, `Param`, headers, `JSON`, `XML`, `Form`, `Multipart`, `Body`, `Context`, and `Do`.
+- **Response helpers:** `Response.Body` exposes `Bytes`, `String`, `JSON`, `XML`, `UTF8`, `Stream`, `SSE`, and status classifiers.
+- **Retries:** idempotent requests retry connection errors, `408`, `429`, and `5xx` through hq-lib-retrier-go, with typed `RetryError` results and exhaustion hooks.
+- **Hooks:** `WithLogger`, `WithRateLimiter`, and `WithURLParser` integrate logging, rate limiting, and URL parsing without core dependencies.
+- **Transport control:** `WithTransport`, `WithTransportBuilder`, `WithTransportWrapper`, `WithTLSHandshakeTimeout`, `WithDialer`, `WithProxy`, `WithCheckRedirect`, and `WithCookieJar` cover custom transports and policies.
+- **Lifecycle:** `Close` cancels in-flight requests, closes idle connections, and rejects later executions with `ErrClientClosed`.
 
 ## Installation
+
+To install `hq-lib-http-go`, run the following command in your Go project:
 
 ```bash
 go get github.com/hueristiq/hq-lib-http-go@latest
 ```
 
-Requires Go 1.26 or later.
+Requires Go 1.26.3 or later.
 
 ## Usage
 
-The examples import the package under the `hqgohttp` alias; subpackage examples use the `hqgohttp`-prefixed aliases (`hqgohttpheader`, `hqgohttpmethod`, `hqgohttpmime`, and `hqgohttprequest`):
-
-```go
-import hqgohttp "github.com/hueristiq/hq-lib-http-go"
-```
+The examples import the root package under the `hqgohttp` alias. Subpackage examples use the `hqgohttp`-prefixed aliases `hqgohttpheader`, `hqgohttpmethod`, `hqgohttpmime`, and `hqgohttprequest`.
 
 ### Client
 
-`New` takes functional options; no execution timeout is applied by default — bound the call with a context or `WithTimeout`:
+`New` takes functional options. Every execution is bounded by a 30-second default timeout, and retryable idempotent failures are attempted three times with exponential backoff. Override either default with `WithTimeout` and `WithRetryMaxAttempts`.
 
 ```go
-client := hqgohttp.New(
-	hqgohttp.WithTimeout(10*time.Second),
+package main
+
+import (
+	"fmt"
+	"log"
+	"time"
+
+	hqgohttp "github.com/hueristiq/hq-lib-http-go"
 )
 
-res, err := client.Get("https://example.com")
-if err != nil {
-	log.Fatalf("Request failed: %v", err)
+func main() {
+	client := hqgohttp.New(
+		hqgohttp.WithTimeout(10*time.Second),
+		hqgohttp.WithRetryMaxAttempts(3),
+	)
+	defer client.Close()
+
+	res, err := client.Get("https://example.com")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	body, err := res.Body.String()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("%s: %d bytes\n", res.Status, len(body))
 }
-
-defer res.Body.Close()
-
-fmt.Println("Response status:", res.Status)
 ```
 
-`WithProtocol` chooses the HTTP version: `ProtocolAuto` (the default), `ProtocolAutoHTTP3` (HTTP/3 first, fallback to auto), or a forced `ProtocolHTTP1`/`ProtocolHTTP2`/`ProtocolHTTP3`. HTTP/3 requires an application-supplied client; `ProtocolHTTP3` without one returns `ErrHTTP3ClientRequired`, and `ProtocolAutoHTTP3` without one behaves as `ProtocolAuto`:
+`WithProtocol` chooses the HTTP version: `ProtocolAuto` (the default), `ProtocolAutoHTTP3` (HTTP/3 first, fallback to auto), or a forced `ProtocolHTTP1`/`ProtocolHTTP2`/`ProtocolHTTP3`. HTTP/3 requires an application-supplied client; `ProtocolHTTP3` without one returns `ErrHTTP3ClientRequired`, and `ProtocolAutoHTTP3` without one behaves as `ProtocolAuto`.
 
 ```go
 // The application builds the HTTP/3 client; quic-go is only an example.
@@ -86,51 +97,64 @@ client := hqgohttp.New(
 )
 ```
 
-`Close` shuts the client down — it cancels in-flight executions with `ErrClientClosed`, closes idle connections, and makes later requests fail. `CloseIdleConnections` is the non-destructive alternative.
+`Close` shuts the client down. It cancels in-flight executions with `ErrClientClosed`, closes idle connections, and makes later requests fail. `CloseIdleConnections` is the non-destructive alternative.
 
-### Fluent Request Builder
+### Fluent request builder
 
-`Request` starts a chainable builder; the client executes the built request with its retrier, rate limiter, and callbacks:
+`Request` starts a chainable builder. The client executes the built request with its retry engine, rate limiter, and callbacks.
 
 ```go
-res, err := client.Request().
-	Method(hqgohttpmethod.POST).
-	URL("https://api.example.com/users").
-	Param("page", "1").
-	SetHeader(hqgohttpheader.ContentType.String(), hqgohttpmime.JSON.String()).
-	JSON(map[string]any{"name": "ada"}).
-	Do()
-if err != nil {
-	log.Fatalf("Request failed: %v", err)
-}
+package main
 
-defer res.Body.Close()
+import (
+	"log"
+
+	hqgohttp "github.com/hueristiq/hq-lib-http-go"
+	hqgohttpheader "github.com/hueristiq/hq-lib-http-go/header"
+	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
+	hqgohttpmime "github.com/hueristiq/hq-lib-http-go/mime"
+)
+
+func main() {
+	client := hqgohttp.New()
+	defer client.Close()
+
+	res, err := client.Request().
+		Method(hqgohttpmethod.POST).
+		URL("https://api.example.com/users").
+		Param("page", "1").
+		SetHeader(hqgohttpheader.ContentType.String(), hqgohttpmime.JSON.String()).
+		JSON(map[string]any{"name": "ada"}).
+		Do()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer res.Body.Close()
+}
 ```
 
-`JSON`, `XML`, `Form`, and `Multipart` encode the body when the request is built and set `Content-Type` only when the final request does not already carry one. `Body` accepts raw strings, bytes, and readers; `BodyStream` sends large bodies without buffering them — a streamed body has no replay function, so a retry approved after the first attempt stops with `ErrBodyNotReplayable`.
+`JSON`, `XML`, `Form`, and `Multipart` encode the body when the request is built and set `Content-Type` only when the final request does not already carry one. `Body` accepts raw strings, bytes, and readers. `BodyStream` sends large bodies without buffering them; a streamed body has no replay function, so a retry approved after the first attempt stops with `ErrBodyNotReplayable`.
 
-A context applies per client (`WithContext`) or per request (`RequestBuilder.Context`); an explicit `context.Background()` or `Context(nil)` also overrides the client default.
+A context applies per client (`WithContext`) or per request (`RequestBuilder.Context`). An explicit `context.Background()` or `Context(nil)` also overrides the client default.
 
-### Response Handling
+### Response handling
 
-`Do` returns `*hqgohttp.Response`, which embeds `*http.Response` and adds an enhanced `Body`:
+`Do` returns `*hqgohttp.Response`, which embeds `*http.Response` and adds an enhanced `Body`.
 
 ```go
 res, err := client.Get("https://api.example.com/users/ada")
 if err != nil {
-	log.Fatalf("Request failed: %v", err)
+	log.Fatal(err)
 }
-
 defer res.Body.Close()
 
 if !res.IsSuccess() {
-	log.Fatalf("Unexpected status: %s", res.Status)
+	log.Fatalf("unexpected status: %s", res.Status)
 }
 
 var user User
-
 if err := res.Body.JSON(&user); err != nil {
-	log.Fatalf("Decoding the response failed: %v", err)
+	log.Fatal(err)
 }
 ```
 
@@ -138,17 +162,17 @@ if err := res.Body.JSON(&user); err != nil {
 
 ### Retries
 
-The retry policy decides, after each attempt, whether the outcome is worth retrying; the retrier decides how many attempts to make and how long to wait. `WithOnRetry` observes every retry, `WithPrepareRetry` re-signs before the next attempt, and `WithAttemptTimeout` bounds one attempt through the headers:
+The retry policy decides, after each attempt, whether the outcome is worth retrying. `WithRetryMaxAttempts` decides how many attempts to make, and the engine uses exponential backoff with jitter. `WithOnRetry` observes every retry, `WithPrepareRetry` re-signs before the next attempt, and `WithAttemptTimeout` bounds one attempt through the headers.
 
 ```go
 client := hqgohttp.New(
-	hqgohttp.WithRetrier(retrier),
+	hqgohttp.WithRetryMaxAttempts(4),
 	hqgohttp.WithOnRetry(func(event hqgohttp.RetryEvent) {
 		log.Printf("attempt %d failed after %s: %v; retrying in %s",
 			event.Attempt, event.Duration, event.Err, event.Wait)
 	}),
 	hqgohttp.WithPrepareRetry(func(_ context.Context, req *http.Request, _ int) error {
-		req.Header.Set("Authorization", "Bearer "+token()) // re-sign after the wait
+		req.Header.Set("Authorization", "Bearer "+token())
 
 		return nil
 	}),
@@ -157,7 +181,7 @@ client := hqgohttp.New(
 
 Retries are idempotent-only by default: GET, HEAD, OPTIONS, TRACE, PUT, DELETE, and QUERY are retried; POST and PATCH are not. Pass `WithRetryIdempotent(false)` to retry every method.
 
-When retries run out, `Do` returns a `*RetryError` carrying the attempt count, the per-attempt history, the last status and headers, and the last failure. A bounded copy of the final response body is included only when capture is enabled with `WithRetryErrorBodyLimit`:
+When retries run out, `Do` returns a `*RetryError` carrying the attempt count, the per-attempt history, the last status and headers, and the last failure. A bounded copy of the final response body is included only when capture is enabled with `WithRetryErrorBodyLimit`.
 
 ```go
 res, err := client.Get("https://api.example.com/users",
@@ -170,17 +194,16 @@ if err != nil {
 		log.Printf("gave up after %d attempts; status=%d", retryErr.Attempts, retryErr.StatusCode)
 	}
 
-	log.Fatalf("Request failed: %v", err)
+	log.Fatal(err)
 }
-
 defer res.Body.Close()
 ```
 
-`errors.Is(err, hqgohttp.ErrRetriesExhausted)` classifies an exhaustion without inspecting the message. `WithOnRetryExhaustion` can hand the final response — body open — to the caller instead of the error, so a `5xx` that is data rather than a failure stays readable.
+`errors.Is(err, hqgohttp.ErrRetriesExhausted)` classifies an exhaustion without inspecting the message. `WithOnRetryExhaustion` can hand the final response, with its body open, to the caller instead of the error, so a `5xx` that is data rather than a failure stays readable.
 
-### Rate Limiting
+### Rate limiting
 
-`WithRateLimiter` accepts any value with a `Wait(ctx) error` method; a `*limiter.Limiter` from [hq-lib-limiter-go](https://github.com/hueristiq/hq-lib-limiter-go) is the suggested implementation:
+`WithRateLimiter` accepts any value with a `Wait(ctx) error` method. A `*limiter.Limiter` from [hq-lib-limiter-go](https://github.com/hueristiq/hq-lib-limiter-go) is the suggested implementation.
 
 ```go
 limiter := hqgolimiter.New(
@@ -195,9 +218,9 @@ client := hqgohttp.New(
 
 The limiter waits once before every retry-engine attempt, not once per request. `RateLimiterFunc` adapts a plain function when the method set does not match the interface.
 
-### URL Parser Hook
+### URL parser hook
 
-`WithURLParser` accepts any value with a `Parse(raw string) (*url.URL, error)` method. The default is `net/url.Parse`, which is strict: no default scheme, no escape repair. An adapter around [hq-lib-url-go](https://github.com/hueristiq/hq-lib-url-go) restores the scheme-defaulting and lenient behavior:
+`WithURLParser` accepts any value with a `Parse(raw string) (*url.URL, error)` method. The default is `net/url.Parse`, which is strict: no default scheme and no escape repair. An adapter around [hq-lib-url-go](https://github.com/hueristiq/hq-lib-url-go) restores the scheme-defaulting and lenient behavior.
 
 ```go
 urlParser := hqgourlparser.New(
@@ -216,47 +239,14 @@ client := hqgohttp.New(
 	})),
 )
 
-res, err := client.Get("example.com/users") // defaulted to http://…
+res, err := client.Get("example.com/users")
 ```
 
 `WithRequestURLParser` overrides it per request. The packages do not import each other; the dependency belongs to the application.
 
-### Retrier Hook
-
-`WithRetrier` accepts any value with a `Retry` method. The engine owns the attempt count, waits, and backoff; the client supplies the operation and the `RetryOn`, `OnRetry`, and `RetryAfter` hooks. An adapter around [hq-lib-retrier-go](https://github.com/hueristiq/hq-lib-retrier-go) looks like this:
-
-```go
-retrier := hqgohttp.RetrierFunc(func(ctx context.Context, operation hqgohttp.RetryOperation, options hqgohttp.RetrierOptions) (*http.Response, error) {
-	return hqgoretrier.RetryWithData(ctx, operation,
-		hqgoretrier.WithMaxAttempts(4),
-		hqgoretrier.WithWaitMin(500*time.Millisecond),
-		hqgoretrier.WithWaitMax(10*time.Second),
-		hqgoretrier.WithBackoff(func(minDelay, maxDelay time.Duration) hqgoretrierbackoff.Backoff {
-			base := hqgoretrierbackoff.ExponentialWithDecorrelatedJitter(minDelay, maxDelay)
-
-			return func(attempt int) time.Duration {
-				if wait, ok := options.RetryAfter(); ok {
-					return min(wait, maxDelay) // honor Retry-After, capped
-				}
-
-				return base(attempt)
-			}
-		}),
-		hqgoretrier.WithRetryOn(options.RetryOn),
-		hqgoretrier.WithOnRetry(func(event hqgoretrier.RetryEvent) {
-			options.OnRetry(hqgohttp.RetrierEvent{Attempt: event.Attempt, Err: event.Err, Wait: event.Wait})
-		}),
-	)
-})
-
-client := hqgohttp.New(hqgohttp.WithRetrier(retrier))
-```
-
-With no retrier, every execution makes a single attempt, and a persistent `429` or `5xx` still returns a `*RetryError`. The package does not import hq-lib-retrier-go; the dependency belongs to the application.
-
 ### Logging
 
-`WithLogger` accepts any value with slog-compatible `Debug`, `Info`, `Warn`, and `Error` methods. A `*slog.Logger` works directly, and [hq-lib-logger-go](https://github.com/hueristiq/hq-lib-logger-go) plugs in through its `SlogHandler`; `WithRequestLogger` overrides the logger for one execution:
+`WithLogger` accepts any value with slog-compatible `Debug`, `Info`, `Warn`, and `Error` methods. A `*slog.Logger` works directly, and [hq-lib-logger-go](https://github.com/hueristiq/hq-lib-logger-go) plugs in through its `SlogHandler`. `WithRequestLogger` overrides the logger for one execution.
 
 ```go
 logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -267,31 +257,31 @@ res, err := client.Get("https://api.example.com/users",
 )
 ```
 
-The client logs `http request` and `http response` at debug, approved retries at warn, and terminal failures at error. Method, redacted URL, attempt, status, duration, and error are included; headers, bodies, and cookies are not. A nil logger disables logging.
+The client logs `http request` and `http response` at debug, approved retries at warn, and terminal failures at error. Method, redacted URL, attempt, status, duration, and error are included. Headers, bodies, and cookies are not. A nil logger disables logging.
 
-### Standard Client Adapter
+### Standard client adapter
 
-`Std()` returns an `*http.Client` whose transport runs the same execution path, and `RoundTrip` implements `http.RoundTripper` directly:
+`Std()` returns an `*http.Client` whose transport runs the same execution path, and `RoundTrip` implements `http.RoundTripper` directly.
 
 ```go
-std := hqgohttp.New(hqgohttp.WithRetrier(retrier)).Std()
+std := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(4)).Std()
 
-res, err := std.Do(req) // retries, then returns the final response
+res, err := std.Do(req)
 ```
 
 The returned client stops at the first response (`http.ErrUseLastResponse`), so redirects remain governed by the hq client. The client also satisfies `http.RoundTripper`, which lets `oauth2.Transport` and similar wrappers use it directly.
 
 ### Transport and TLS
 
-`WithTransport` replaces the library-built transport; `WithTransportWrapper` decorates it and keeps protocol selection, TLS, and proxy settings. `WithDialContext` (or `WithDialer`) sets the dial function for built HTTP/1.x and HTTP/2 transports, `WithTLSHandshakeTimeout` bounds the handshake, and `WithTransportBuilder` customizes the built `*http.Transport`. HTTP/3 is not built by the library: construct the client with your HTTP/3 implementation and pass it whole with `WithHTTP3Client`. Its transport, dial function, QUIC settings, and TLS configuration are owned by the application.
+`WithTransport` replaces the library-built transport. `WithTransportWrapper` decorates it and keeps protocol selection, TLS, and proxy settings. `WithDialContext` (or `WithDialer`) sets the dial function for built HTTP/1.x and HTTP/2 transports, `WithTLSHandshakeTimeout` bounds the handshake, and `WithTransportBuilder` customizes the built `*http.Transport`. The library does not build HTTP/3 clients: construct the client with your HTTP/3 implementation and pass it whole with `WithHTTP3Client`. The application owns its transport, dial function, QUIC settings, and TLS configuration.
 
-`WithCheckRedirect` and `WithCookieJar` set the redirect policy and cookie jar; both also apply to shallow copies of a `WithHTTPClient` or `WithHTTP3Client` client, leaving the caller's client unmodified.
+`WithCheckRedirect` and `WithCookieJar` set the redirect policy and cookie jar. Both also apply to shallow copies of a `WithHTTPClient` or `WithHTTP3Client` client, leaving the caller's client unmodified.
 
 ## Contributing
 
 Contributions are welcome and encouraged! Feel free to submit [Pull Requests](https://github.com/hueristiq/hq-lib-http-go/pulls) or report [Issues](https://github.com/hueristiq/hq-lib-http-go/issues).
 
-A big thank you to all the [contributors](https://github.com/hueristiq/hq-lib-http-go/graphs/contributors) for their ongoing support!
+A big thank you to all the [contributors](https://github.com/hueristiq/hq-lib-http-go/graphs/contributors) for your ongoing support!
 
 ![contributors](https://contrib.rocks/image?repo=hueristiq/hq-lib-http-go&max=500)
 

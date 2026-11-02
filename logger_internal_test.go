@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -113,18 +112,8 @@ func TestLoggerRetry(t *testing.T) {
 	defer server.Close()
 
 	logger := &captureLogger{}
-	retrier := RetrierFunc(func(_ context.Context, operation RetryOperation, options RetrierOptions) (*http.Response, error) {
-		response, err := operation()
-		if response != nil && response.StatusCode == http.StatusInternalServerError {
-			options.OnRetry(RetrierEvent{Attempt: 1, Err: err})
 
-			return operation()
-		}
-
-		return response, err
-	})
-
-	client := New(WithRetrier(retrier), WithLogger(logger))
+	client := New(WithRetryMaxAttempts(2), WithLogger(logger))
 
 	response, err := client.Get(server.URL)
 	require.NoError(t, err)
@@ -145,11 +134,8 @@ func TestLoggerFailure(t *testing.T) {
 	defer server.Close()
 
 	logger := &captureLogger{}
-	retrier := RetrierFunc(func(_ context.Context, operation RetryOperation, _ RetrierOptions) (*http.Response, error) {
-		return operation()
-	})
 
-	client := New(WithRetrier(retrier), WithLogger(logger))
+	client := New(WithRetryMaxAttempts(1), WithLogger(logger))
 
 	_, err := client.Get(server.URL)
 	require.Error(t, err)

@@ -40,19 +40,6 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (res *http.Response, err err
 	return
 }
 
-// closeSpyBody records whether its Close method was called.
-type closeSpyBody struct {
-	io.Reader
-	closed atomic.Bool
-}
-
-// Close marks the body closed.
-func (b *closeSpyBody) Close() error {
-	b.closed.Store(true)
-
-	return nil
-}
-
 // newOKResponse builds a minimal 200 OK response with the given body.
 //
 // Parameters:
@@ -219,7 +206,7 @@ func TestClient_RetriedResponseBodyIsDrainedWithinLimit(t *testing.T) {
 
 		client = New(
 			WithHTTPClient(&http.Client{Transport: transport}),
-			WithRetrier(internalTestRetrier{maxAttempts: 3, wait: time.Millisecond}),
+			WithRetryMaxAttempts(3),
 		)
 
 		return
@@ -400,13 +387,13 @@ func TestClientOptions_WithHeader(t *testing.T) {
 	assert.Equal(t, "third", opts.Headers[1].Value)
 }
 
-func TestClient_ExecutionTimeoutDefaultsToDisabled(t *testing.T) {
+func TestClient_ExecutionTimeoutDefaultsToThirtySeconds(t *testing.T) {
 	t.Parallel()
 
-	assert.Zero(t, New().config.Timeout)
+	assert.Equal(t, 30*time.Second, New().config.Timeout)
 	assert.Zero(t, New(WithTimeout(0)).config.Timeout)
 	assert.Zero(t, New(WithTimeout(-time.Second)).config.Timeout)
-	assert.Equal(t, RecommendedTimeout, New(WithTimeout(RecommendedTimeout)).config.Timeout)
+	assert.Equal(t, 10*time.Second, New(WithTimeout(10*time.Second)).config.Timeout)
 }
 
 func TestWithAttemptTimeout(t *testing.T) {
@@ -1789,69 +1776,6 @@ func TestClient_RetryErrorBodyReadError(t *testing.T) {
 
 	require.ErrorAs(t, err, &retryErr)
 	require.ErrorIs(t, retryErr.BodyErr, readErr)
-}
-
-func TestClient_RetrierNilNilOutcome(t *testing.T) {
-	t.Parallel()
-
-	client := New(WithRetrier(RetrierFunc(func(context.Context, RetryOperation, RetrierOptions) (*http.Response, error) {
-		return nil, nil //nolint:nilnil // The test deliberately exercises an invalid retrier outcome.
-	})))
-
-	res, err := client.Get("http://example.com/nil-nil")
-
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.Contains(t, err.Error(), "no response")
-
-	req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/nil-nil", http.NoBody)
-
-	require.NoError(t, reqErr)
-
-	rtRes, rtErr := client.RoundTrip(req)
-
-	require.Error(t, rtErr)
-
-	if rtRes != nil {
-		require.NoError(t, rtRes.Body.Close())
-	}
-
-	assert.Nil(t, rtRes)
-}
-
-func TestClient_RetrierPlainErrorClosesLastResponse(t *testing.T) {
-	t.Parallel()
-
-	body := &closeSpyBody{Reader: strings.NewReader("error body")}
-
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusInternalServerError,
-			Status:     "500 Internal Server Error",
-			Header:     make(http.Header),
-			Body:       body,
-			Request:    req,
-		}, nil
-	})
-
-	client := New(
-		WithTransport(transport),
-		WithRetrier(RetrierFunc(func(_ context.Context, operation RetryOperation, _ RetrierOptions) (*http.Response, error) {
-			_, _ = operation()
-
-			return nil, errors.New("plain retrier failure")
-		})),
-	)
-
-	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "http://example.com/plain", nil)
-
-	require.NoError(t, err)
-
-	res, err := client.Do(req)
-
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.True(t, body.closed.Load(), "Expected the orphaned response body to be closed")
 }
 
 //nolint:paralleltest // substitutes a package-level client seam, which is process-wide state.

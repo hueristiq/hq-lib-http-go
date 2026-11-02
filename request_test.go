@@ -491,39 +491,6 @@ func TestRequestBuilder_Invalid(t *testing.T) {
 	})
 }
 
-func TestRequestBuilder_WithOptions(t *testing.T) {
-	t.Parallel()
-
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		attempts.Add(1)
-
-		w.WriteHeader(hqgohttpstatus.ServiceUnavailable.Int())
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := hqgohttp.New(
-		hqgohttp.WithRetrier(testRetrier{maxAttempts: 6}),
-	)
-
-	res, err := client.Request().
-		URL(server.URL).
-		WithOptions(hqgohttp.WithRequestRetrier(testRetrier{maxAttempts: 2})).
-		Context(t.Context()).Do()
-
-	require.Error(t, err)
-
-	if res != nil {
-		require.NoError(t, res.Body.Close())
-	}
-
-	assert.Nil(t, res)
-	assert.Equal(t, int32(2), attempts.Load(),
-		"Expected the builder-registered request options to override the client configuration")
-}
-
 func TestRequestBuilder_NilContext(t *testing.T) {
 	t.Parallel()
 
@@ -996,7 +963,7 @@ func TestRequestBuilder_MultipartRetry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetrier(testRetrier{maxAttempts: 2}),
+		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithRetryIdempotent(false),
 	)
 
@@ -1653,7 +1620,7 @@ func TestRequestBuilder_BodyStreamIsNotReplayed(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := hqgohttp.New(
-		hqgohttp.WithRetrier(testRetrier{maxAttempts: 3}),
+		hqgohttp.WithRetryMaxAttempts(3),
 	)
 
 	res, err := client.Request().

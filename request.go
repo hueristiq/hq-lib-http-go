@@ -38,8 +38,8 @@ import (
 //   - URLParser (hqgohttprequest.URLParser): the parser turning a raw URL into
 //     an absolute URL when [RequestBuilder] builds the request. Nil selects
 //     [net/url.Parse].
-//   - Retrier (Retrier): the engine running the execution's attempts. Nil makes
-//     a single attempt.
+//   - RetryMaxAttempts (int): the maximum attempts for the execution,
+//     including the first. Non-positive selects 3.
 //   - Logger (Logger): the structured logger used by the execution. Nil
 //     disables logging.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
@@ -62,7 +62,7 @@ type requestOptions struct {
 	MaxResponseBodySize    int64
 	MaxRequestBodySize     int64
 	URLParser              hqgohttprequest.URLParser
-	Retrier                Retrier
+	RetryMaxAttempts       int
 	Logger                 Logger
 	RetryPolicy            RetryPolicy
 	RateLimiter            RateLimiter
@@ -86,6 +86,10 @@ func (opts *requestOptions) normalize() {
 
 	if opts.RetryPolicy == nil {
 		opts.RetryPolicy = DefaultRetryPolicy
+	}
+
+	if opts.RetryMaxAttempts <= 0 {
+		opts.RetryMaxAttempts = defaultRetryMaxAttempts
 	}
 
 	if opts.ResponseReadLimit <= 0 {
@@ -144,7 +148,7 @@ func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *requestOptions)
 		MaxResponseBodySize:    c.config.MaxResponseBodySize,
 		MaxRequestBodySize:     c.config.MaxRequestBodySize,
 		URLParser:              c.config.URLParser,
-		Retrier:                c.config.Retrier,
+		RetryMaxAttempts:       c.config.RetryMaxAttempts,
 		Logger:                 c.config.Logger,
 		RetryPolicy:            c.config.RetryPolicy,
 		RateLimiter:            c.config.RateLimiter,

@@ -6,8 +6,7 @@ import (
 )
 
 // Logger is the minimal logging surface used by the client. It is satisfied by
-// [log/slog.Logger]. Implementations must be safe for concurrent use. A nil
-// Logger disables logging. Arguments follow the slog key/value convention.
+// [log/slog.Logger]. A nil Logger disables logging.
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)

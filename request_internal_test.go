@@ -25,23 +25,11 @@ func TestRequestOptionFuncs(t *testing.T) {
 
 	baseLimiter := testRateLimiter{}
 
-	baseRetrier := internalTestRetrier{maxAttempts: 1}
-	otherRetrier := internalTestRetrier{maxAttempts: 2}
-
 	opts := &requestOptions{
-		Retrier:           baseRetrier,
 		RetryPolicy:       basePolicy,
 		RateLimiter:       baseLimiter,
 		ResponseReadLimit: 9,
 	}
-
-	WithRequestRetrier(nil)(opts)
-
-	assert.Nil(t, opts.Retrier, "Expected a nil override to disable retries")
-
-	WithRequestRetrier(otherRetrier)(opts)
-
-	assert.Equal(t, otherRetrier, opts.Retrier)
 
 	WithRequestRetryPolicy(nil)(opts)
 

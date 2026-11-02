@@ -67,7 +67,7 @@
 // [WithTransportWrapper], [WithDialContext],
 // [WithDialer], [WithTLSHandshakeTimeout], [WithProxy], [WithCheckRedirect],
 // [WithCookieJar], [WithHeader] (including a User-Agent default),
-// [WithURLParser], [WithRetrier], [WithLogger], the retry policy options ([WithRetryPolicy],
+// [WithURLParser], [WithRetryMaxAttempts], [WithLogger], the retry policy options ([WithRetryPolicy],
 // [WithRetryIdempotent], [WithRetryErrorBodyLimit]), [WithOnRetryExhaustion],
 // [WithPrepareRetry], [WithRateLimiter], the observability callbacks ([WithOnRequest],
 // [WithOnResponse], [WithOnRetry]), [WithMaxRequestsBeforeIdleClose],
@@ -86,7 +86,7 @@
 // [WithProxy], then [WithTransportWrapper]. HTTP/3 clients are supplied whole
 // with [WithHTTP3Client] and are not built or decorated by the library.
 //
-// A single request execution overrides the URL parser, the retrier, the logger,
+// A single request execution overrides the URL parser, the logger,
 // the rate limiter, the attempt timeout, the retry hook, the per-attempt callbacks, the
 // pre-retry hook, the exhaustion handler, the idempotency restriction, the
 // response-body cap, and the drain and snapshot bounds through
@@ -103,14 +103,11 @@
 // resend belongs to the same attempt and does not wait again. A wait error
 // stops the execution before the attempt.
 //
-// The retry engine registered with [WithRetrier], or overridden for one request
-// with [WithRequestRetrier], is any value with a Retry method — for example an
-// adapter around github.com/hueristiq/hq-lib-retrier-go built with
-// [RetrierFunc]. The engine owns the attempt count, waits, and backoff; the
-// client supplies the operation and the HTTP-specific hooks in
-// [RetrierOptions], including the retryable-error predicate, the retry
-// notification, and the parsed Retry-After wait. No module dependency is
-// imposed. With no retrier, every execution makes a single attempt.
+// Retries run through the hq-lib-retrier-go engine. The engine owns the waits
+// and backoff — exponential with equal jitter, bounded at 2s — while the client
+// supplies the retryable-error predicate, the retry notification, and the
+// parsed Retry-After wait. The engine makes three attempts by default;
+// [WithRetryMaxAttempts] changes the count, and 1 makes a single attempt.
 //
 // The logger registered with [WithLogger], or overridden for one request with
 // [WithRequestLogger], is any value whose Debug, Info, Warn, and Error methods
@@ -131,9 +128,9 @@
 //
 // # Retries
 //
-// Retries run only through the configured [Retrier]. The retry policy decides
-// after each attempt whether another is worthwhile; the engine decides how many
-// attempts to make and how long to wait. After each attempt the [RetryPolicy]
+// Retries run through the hq-lib-retrier-go engine. The retry policy decides
+// after each attempt whether another is worthwhile; [WithRetryMaxAttempts]
+// decides how many attempts to make. After each attempt the [RetryPolicy]
 // sees the attempt request, the response, the error, and the 1-based attempt
 // number, so policies can react to status codes and method idempotency;
 // [DefaultRetryPolicy] retries connection and transport errors, 408, 429, and
@@ -142,12 +139,11 @@
 // limit, an unsupported scheme, a TLS certificate verification failure, or a
 // permanent DNS failure such as NXDOMAIN.
 //
-// A Retry-After header on a retried response is parsed and exposed to the
-// engine through [RetrierOptions.RetryAfter]; the documented adapter prefers it
-// over its backoff, capped at the engine's maximum wait. [WithOnRetry] reports
-// each approved retry with its attempt, response, error, duration, and computed
-// wait. [WithPrepareRetry] runs after the wait and before the next attempt, so
-// a caller can re-sign a request; returning an error stops the execution.
+// A Retry-After header on a retried response is preferred over the engine's
+// backoff, capped at 2s. [WithOnRetry] reports each approved retry with its
+// attempt, response, error, duration, and computed wait. [WithPrepareRetry]
+// runs after the wait and before the next attempt, so a caller can re-sign a
+// request; returning an error stops the execution.
 //
 // Retries are idempotent-only by default: GET, HEAD, OPTIONS, TRACE, PUT,
 // DELETE, and QUERY are retried; POST and PATCH are not. QUERY is safe and
@@ -165,10 +161,11 @@
 // last failure; it matches [ErrRetriesExhausted] with errors.Is, except for the
 // final, non-replayed outcome above. A bounded copy of the final response body
 // is included only when capture is enabled with [WithRetryErrorBodyLimit]; a
-// read error from that capture is reported in [RetryError.BodyErr]. With no
-// retrier, the single attempt still classifies this way, so a persistent 429 or
-// 5xx produces a [RetryError]. [WithOnRetryExhaustion] replaces that default
-// and can hand the final response, body open, to the caller.
+// read error from that capture is reported in [RetryError.BodyErr]. When
+// retries are disabled, the single attempt still classifies this way, so a
+// persistent 429 or 5xx produces a [RetryError]. [WithOnRetryExhaustion]
+// replaces that default and can hand the final response, body open, to the
+// caller.
 //
 // # HTTP protocols
 //

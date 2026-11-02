@@ -18,6 +18,8 @@ import (
 	hqgohttpheader "github.com/hueristiq/hq-lib-http-go/header"
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
+	hqgoretrier "github.com/hueristiq/hq-lib-retrier-go"
+	hqgoretrierbackoff "github.com/hueristiq/hq-lib-retrier-go/backoff"
 )
 
 // Client is the primary structure used to perform HTTP requests.
@@ -288,9 +290,8 @@ func (c *Client) Options(rawURL string, ofs ...RequestOptionFunc) (res *Response
 //   - URLParser (hqgohttprequest.URLParser): the parser turning a raw URL into
 //     an absolute URL when [RequestBuilder] builds a request. Nil selects
 //     [net/url.Parse].
-//   - Retrier (Retrier): the engine running the attempts of every execution.
-//     Nil means a single attempt; the engine owns the attempt count, waits, and
-//     backoff.
+//   - RetryMaxAttempts (int): the maximum attempts per execution, including
+//     the first. Non-positive selects 3.
 //   - Logger (Logger): the structured logger used by the execution. Nil
 //     disables logging.
 //   - RetryPolicy (RetryPolicy): the predicate deciding, per attempt, whether to
@@ -350,7 +351,7 @@ type clientOptions struct {
 	MaxRequestBodySize         int64
 	AttemptTimeout             time.Duration
 	URLParser                  hqgohttprequest.URLParser
-	Retrier                    Retrier
+	RetryMaxAttempts           int
 	Logger                     Logger
 	RetryPolicy                RetryPolicy
 	RateLimiter                RateLimiter
@@ -396,6 +397,10 @@ func (opts *clientOptions) normalize() {
 		opts.RetryPolicy = DefaultRetryPolicy
 	}
 
+	if opts.RetryMaxAttempts <= 0 {
+		opts.RetryMaxAttempts = defaultRetryMaxAttempts
+	}
+
 	if opts.ResponseReadLimit <= 0 {
 		opts.ResponseReadLimit = DefaultResponseReadLimit
 	}
@@ -417,11 +422,12 @@ type ClientOptionFunc func(opts *clientOptions)
 //
 // Unset options fall back to defaults: [ProtocolAuto] over a pooled client,
 // [DefaultUserAgent] as the default User-Agent header
-// (replaceable with [WithHeader]), no execution timeout
-// ([DefaultResponseBodyTimeout] adds no separate body-read bound), no
-// per-attempt timeout, no retrier (a single attempt per execution),
-// [DefaultRetryPolicy], idempotent-only retries, no rate limiter, no logger,
-// no callbacks, no retry hook, no periodic idle-connection close,
+// (replaceable with [WithHeader]), a 30-second execution timeout
+// ([DefaultTimeout]), [DefaultResponseBodyTimeout] adding no separate body-read
+// bound, no per-attempt timeout, the hq-lib-retrier-go engine (three attempts
+// with exponential backoff and jitter; [WithRetryMaxAttempts] changes the
+// count), [DefaultRetryPolicy], idempotent-only retries, no rate limiter, no
+// logger, no callbacks, no retry hook, no periodic idle-connection close,
 // [DefaultResponseReadLimit] as the drain bound, retry-error body capture
 // disabled ([DefaultRetryErrorBodyLimit] is zero), no response or request body
 // cap, and [DefaultHTTP3FallbackTTL] for the HTTP/3 failure cache. A
@@ -443,6 +449,7 @@ func New(ofs ...ClientOptionFunc) (client *Client) {
 		ResponseBodyTimeout: DefaultResponseBodyTimeout,
 		RetryPolicy:         DefaultRetryPolicy,
 		IdempotentRetries:   true,
+		RetryMaxAttempts:    defaultRetryMaxAttempts,
 		ResponseReadLimit:   DefaultResponseReadLimit,
 		RetryErrorBodyLimit: DefaultRetryErrorBodyLimit,
 		HTTP3FallbackTTL:    DefaultHTTP3FallbackTTL,
@@ -576,9 +583,8 @@ func WithHeader(key, value string) (f ClientOptionFunc) {
 //
 // Parameters:
 //   - timeout (time.Duration): the execution bound. A positive value sets the
-//     bound; values less than or equal to 0 disable it. The execution is
-//     unbounded by default; [RecommendedTimeout] restores the 30-second bound
-//     earlier releases applied.
+//     bound; values less than or equal to 0 disable it. The default is
+//     [DefaultTimeout].
 //
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the timeout field.
@@ -776,27 +782,23 @@ func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
 	}
 }
 
-// WithRetrier returns a [ClientOptionFunc] that registers the retry engine
-// running the attempts of every request execution. The engine owns the attempt
-// count, waits, and backoff; the client supplies the operation, its
-// HTTP-specific hooks, and the parsed Retry-After wait through
-// [RetrierOptions].
+// WithRetryMaxAttempts returns a [ClientOptionFunc] that sets the maximum
+// attempts per execution, including the first. Values less than or equal to
+// zero select the default, 3.
 //
-// The retrier is any value with a Retry method — for example an adapter around
-// github.com/hueristiq/hq-lib-retrier-go built with [RetrierFunc] — so no
-// module dependency is imposed. With no retrier, every execution makes a
-// single attempt; a persistent 429 or 5xx outcome still becomes a
+// The engine itself is fixed: attempts run through hq-lib-retrier-go with
+// exponential backoff and jitter, and a persistent 429 or 5xx outcome becomes a
 // [*RetryError] unless a policy or [WithOnRetryExhaustion] returns the final
-// response. A retrier shared across clients must be safe for concurrent use.
+// response. A value of 1 makes a single attempt.
 //
 // Parameters:
-//   - retrier (Retrier): the retry engine. Nil disables retries.
+//   - maxAttempts (int): the maximum attempts per execution.
 //
 // Returns:
-//   - f (ClientOptionFunc): a functional option that sets the retrier field.
-func WithRetrier(retrier Retrier) (f ClientOptionFunc) {
+//   - f (ClientOptionFunc): a functional option that sets the retry attempt count.
+func WithRetryMaxAttempts(maxAttempts int) (f ClientOptionFunc) {
 	return func(opts *clientOptions) {
-		opts.Retrier = retrier
+		opts.RetryMaxAttempts = maxAttempts
 	}
 }
 
@@ -1001,26 +1003,6 @@ func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
 func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
 	return func(opts *clientOptions) {
 		opts.RetryErrorBodyLimit = retryErrorBodyLimit
-	}
-}
-
-// WithRequestRetrier returns a [RequestOptionFunc] that overrides the retry
-// engine for a single request. The engine owns the attempt count, waits, and
-// backoff, so the override is the way to change them per request.
-//
-// Unlike [WithRequestRateLimiter], nil is not ignored: it disables retries for
-// that execution, so a request can opt out of a client-wide engine. Omit the
-// option to keep the client configuration.
-//
-// Parameters:
-//   - retrier (Retrier): the retry engine. Nil disables retries for the
-//     request.
-//
-// Returns:
-//   - f (RequestOptionFunc): a functional option that sets the retrier field.
-func WithRequestRetrier(retrier Retrier) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
-		opts.Retrier = retrier
 	}
 }
 
@@ -1469,8 +1451,9 @@ type RetryExhaustionHandler func(resp *http.Response, err error, attempts int) (
 // and consults the retry policy. Retries are idempotent-only by default, so a
 // POST or PATCH stops after its first response unless
 // WithRetryIdempotent(false) or WithRequestRetryIdempotent(false) opts
-// out. Attempts run only through the [Retrier] configured with [WithRetrier];
-// without one the execution makes a single attempt. When the policy approves a
+// out. Attempts run through the hq-lib-retrier-go engine, which defaults to
+// three attempts with exponential backoff and jitter; [WithRetryMaxAttempts]
+// changes the count, and 1 makes a single attempt. When the policy approves a
 // retry, the engine invokes the OnRetry callback before its wait. A request
 // body built through the request package or
 // [Client.Request] is reusable, so every attempt resends it in full; a body
@@ -1489,8 +1472,8 @@ type RetryExhaustionHandler func(resp *http.Response, err error, attempts int) (
 //     history, and the last failure. A bounded body snapshot is included only
 //     when body capture is enabled with [WithRetryErrorBodyLimit]; a read
 //     error from that capture is exposed as [RetryError.BodyErr]. A configured
-//     [RetryExhaustionHandler] replaces this outcome. With no retrier, the
-//     single attempt still classifies this way, so a persistent 429 or 5xx
+//     [RetryExhaustionHandler] replaces this outcome. With retries disabled,
+//     the single attempt still classifies this way, so a persistent 429 or 5xx
 //     returns a [*RetryError].
 //   - A body that cannot be replayed on an approved retry: a nil response and
 //     a [*RetryError] built from the last response, without another attempt.
@@ -1695,10 +1678,9 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 	}
 
 	// retryAfter carries the wait parsed from a Retry-After header of the
-	// attempt that was approved for retry, exposed to the engine through
-	// [RetrierOptions.RetryAfter]. retryAfterSet distinguishes an honored zero
-	// wait from an absent header. Both run on the retry loop's goroutine, so
-	// plain variables are safe.
+	// attempt that was approved for retry, preferred by the engine's backoff.
+	// retryAfterSet distinguishes an honored zero wait from an absent header.
+	// Both run on the retry loop's goroutine, so plain variables are safe.
 	var (
 		retryAfter    time.Duration
 		retryAfterSet bool
@@ -1920,56 +1902,70 @@ func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *ht
 		return attemptRes, attemptErr
 	}
 
-	retrierOptions := RetrierOptions{
-		RetryOn: isMarkedRetryable,
-		OnRetry: func(event RetrierEvent) {
-			attemptErr := event.Err
+	onRetry := func(event hqgoretrier.RetryEvent) {
+		attemptErr := event.Err
 
-			// Release the failed attempt before the engine waits: the response
-			// body is no longer needed, and closing it lets the connection be
-			// reused while the per-attempt context can be canceled.
-			var marker *retryableError
-			if errors.As(attemptErr, &marker) {
-				if marker.resp != nil && marker.resp.Body != nil {
-					drainBody(marker.resp.Body, opts.ResponseReadLimit)
+		// Release the failed attempt before the engine waits: the response
+		// body is no longer needed, and closing it lets the connection be
+		// reused while the per-attempt context can be canceled.
+		var marker *retryableError
+		if errors.As(attemptErr, &marker) {
+			if marker.resp != nil && marker.resp.Body != nil {
+				drainBody(marker.resp.Body, opts.ResponseReadLimit)
 
-					if marker.resp == lastAttemptResponse {
-						lastResponseClosed = true
-					}
+				if marker.resp == lastAttemptResponse {
+					lastResponseClosed = true
 				}
-
-				attemptErr = marker.err
 			}
 
-			if lastAttemptCancel != nil {
-				lastAttemptCancel(nil)
-			}
+			attemptErr = marker.err
+		}
 
-			logHTTPRetry(opts.Logger, lastAttemptRequest, lastAttemptResponse, attemptErr, event.Attempt, event.Wait, lastAttemptDuration)
+		if lastAttemptCancel != nil {
+			lastAttemptCancel(nil)
+		}
 
-			if opts.OnRetry == nil {
-				return
-			}
+		logHTTPRetry(opts.Logger, lastAttemptRequest, lastAttemptResponse, attemptErr, event.Attempt, event.Wait, lastAttemptDuration)
 
-			opts.OnRetry(RetryEvent{
-				Attempt:  event.Attempt,
-				Request:  lastAttemptRequest,
-				Response: lastAttemptResponse,
-				Err:      attemptErr,
-				Wait:     event.Wait,
-				Duration: lastAttemptDuration,
-			})
-		},
-		RetryAfter: func() (wait time.Duration, ok bool) {
-			return retryAfter, retryAfterSet
-		},
+		if opts.OnRetry == nil {
+			return
+		}
+
+		opts.OnRetry(RetryEvent{
+			Attempt:  event.Attempt,
+			Request:  lastAttemptRequest,
+			Response: lastAttemptResponse,
+			Err:      attemptErr,
+			Wait:     event.Wait,
+			Duration: lastAttemptDuration,
+		})
 	}
 
-	if opts.Retrier != nil {
-		res, err = opts.Retrier.Retry(reqCtx, operation, retrierOptions)
-	} else {
-		res, err = operation()
+	// retryAfterBackoff prefers the parsed Retry-After wait over the exponential
+	// backoff for the next attempt, capped at the engine's maximum.
+	retryAfterBackoff := func(minDelay, maxDelay time.Duration) (b hqgoretrierbackoff.Backoff) {
+		base := hqgoretrierbackoff.ExponentialWithEqualJitter(minDelay, maxDelay)
+
+		return func(attempt int) (wait time.Duration) {
+			if retryAfterSet {
+				wait = min(retryAfter, maxDelay)
+				retryAfterSet = false
+
+				return wait
+			}
+
+			return base(attempt)
+		}
 	}
+
+	res, err = hqgoretrier.RetryWithData(reqCtx, operation,
+		hqgoretrier.WithMaxAttempts(opts.RetryMaxAttempts),
+		hqgoretrier.WithWaitMin(retryWaitMin),
+		hqgoretrier.WithWaitMax(retryWaitMax),
+		hqgoretrier.WithBackoff(retryAfterBackoff),
+		hqgoretrier.WithRetryOn(isMarkedRetryable),
+		hqgoretrier.WithOnRetry(onRetry),
+	)
 
 	if res == nil && err == nil {
 		err = errors.New("http.Client.Do: retrier returned no response and no error")
@@ -2560,19 +2556,13 @@ func WithTLSConfig(config *tls.Config) (f ClientOptionFunc) {
 }
 
 const (
-	// DefaultTimeout is zero: no bound is placed on an execution through
-	// receipt of the response headers. The caller's context still bounds every
-	// attempt and wait.
+	// DefaultTimeout bounds a complete execution through receipt of the
+	// response headers, including retries and the waits between them. The
+	// caller's context still bounds every attempt and wait.
 	//
-	// Use [WithTimeout] with a positive value to add a bound;
-	// [RecommendedTimeout] is the value earlier releases applied by default. A
-	// non-positive [WithTimeout] value keeps the execution unbounded.
-	DefaultTimeout = 0 * time.Second
-
-	// RecommendedTimeout is the 30-second execution bound earlier releases
-	// applied by default. It is a suggested value for [WithTimeout], not a
-	// default: pass it explicitly to restore that behavior.
-	RecommendedTimeout = 30 * time.Second
+	// Use [WithTimeout] to change it; a non-positive value makes the execution
+	// unbounded.
+	DefaultTimeout = 30 * time.Second
 
 	// DefaultResponseBodyTimeout is the default separate bound on reading a
 	// handed-out response body. Zero means no separate bound: the caller's
