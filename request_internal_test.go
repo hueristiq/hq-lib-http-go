@@ -108,7 +108,7 @@ func TestRequestOptionFuncs(t *testing.T) {
 func TestRequestBuilder_Build_AddedHeaderAppendsToClientDefault(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithHeader("X-Default", "client"))
+	client := mustNew(t, WithHeader("X-Default", "client"))
 
 	req, err := client.Request().
 		URL("http://example.com/").
@@ -123,7 +123,7 @@ func TestRequestBuilder_Build_AddedHeaderAppendsToClientDefault(t *testing.T) {
 func TestRequestBuilder_Build_MissingURL(t *testing.T) {
 	t.Parallel()
 
-	_, err := New().Request().build(t.Context())
+	_, err := mustNew(t).Request().build(t.Context())
 
 	require.ErrorIs(t, err, ErrNoURL)
 }
@@ -162,7 +162,7 @@ func TestApplyDefaultHeaders(t *testing.T) {
 func TestRequestBuilder_Build_RequestError(t *testing.T) {
 	t.Parallel()
 
-	client := New()
+	client := mustNew(t)
 
 	_, err := client.Request().Method(hqgohttpmethod.Method("BAD METHOD")).URL("http://example.com/").build(t.Context())
 

@@ -61,7 +61,7 @@ func TestRateLimiterFunc(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithRateLimiter(hqgohttp.RateLimiterFunc(func(context.Context) error {
 				calls.Add(1)
 

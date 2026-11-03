@@ -30,7 +30,7 @@ func Benchmark_Client_Do(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(b)
 
 	req, err := hqgohttprequest.New(b.Context(), hqgohttpmethod.GET.String(), server.URL, nil)
 	if err != nil {
@@ -67,7 +67,7 @@ func Benchmark_Client_Get(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(b)
 
 	b.ReportAllocs()
 
@@ -100,7 +100,7 @@ func Benchmark_RequestBuilder_Do(b *testing.B) {
 
 	b.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(b)
 
 	b.ReportAllocs()
 

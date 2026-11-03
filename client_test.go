@@ -58,7 +58,7 @@ func readRawBody(t *testing.T, res *http.Response) (body string) {
 func TestNew(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	require.NotNil(t, client)
 }
@@ -69,24 +69,24 @@ func TestNew_Options(t *testing.T) {
 	t.Run("nil HTTP client is ignored", func(t *testing.T) {
 		t.Parallel()
 
-		client := hqgohttp.New(hqgohttp.WithHTTPClient(nil))
+		client := mustNew(t, hqgohttp.WithHTTPClient(nil))
 
 		require.NotNil(t, client)
 	})
 
-	t.Run("invalid values are normalized", func(t *testing.T) {
+	t.Run("invalid values are rejected", func(t *testing.T) {
 		t.Parallel()
 
-		client := hqgohttp.New(
+		if _, err := hqgohttp.New(
 			hqgohttp.WithTimeout(-time.Second),
 			hqgohttp.WithRetryPolicy(nil),
 			hqgohttp.WithRateLimiter(nil),
 			hqgohttp.WithOnRequest(nil),
 			hqgohttp.WithOnResponse(nil),
 			hqgohttp.WithResponseReadLimit(-1),
-		)
-
-		require.NotNil(t, client)
+		); err == nil {
+			t.Error("New() with invalid values: expected a validation error")
+		}
 	})
 }
 
@@ -99,7 +99,7 @@ func TestClient_Do(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), server.URL, nil)
 
@@ -121,7 +121,7 @@ func TestClient_Do_ClientDefaults(t *testing.T) {
 
 	serverURL := newMirrorServer(t, &mirror)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithHeader("X-Default", "client"),
 		hqgohttp.WithHeader("X-Override", "client"),
 		hqgohttp.WithHeader("Host", "virtual.example"),
@@ -157,7 +157,7 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		req, err := hqgohttprequest.New(t.Context(), hqgohttpmethod.GET.String(), serverURL+"/absolute", nil)
 
@@ -178,7 +178,7 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
 			return neturl.Parse("http://" + raw)
@@ -206,7 +206,7 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 		_, port, err := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
 		require.NoError(t, err)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		parser := hqgohttprequest.URLParserFunc(func(raw string) (*neturl.URL, error) {
 			return neturl.Parse("http://" + raw)
@@ -228,7 +228,7 @@ func TestClient_Do_SchemeDefaulting(t *testing.T) {
 func TestClient_Do_NilRequest(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Do(nil)
 
@@ -251,7 +251,7 @@ func TestClient_NilContext(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Get(server.URL)
 
@@ -271,7 +271,7 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	tests := []struct {
 		name     string
@@ -433,7 +433,7 @@ func TestClient_UserAgent(t *testing.T) {
 
 		serverURL, captured := newCaptureServer(t)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Get(serverURL)
 
@@ -447,7 +447,7 @@ func TestClient_UserAgent(t *testing.T) {
 
 		serverURL, captured := newCaptureServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("user-agent", "custom-agent/1.0"))
+		client := mustNew(t, hqgohttp.WithHeader("user-agent", "custom-agent/1.0"))
 
 		res, err := client.Get(serverURL)
 
@@ -463,7 +463,7 @@ func TestClient_UserAgent(t *testing.T) {
 
 		userAgent := hqgohttpuseragent.Random()
 
-		client := hqgohttp.New(hqgohttp.WithHeader("User-Agent", userAgent))
+		client := mustNew(t, hqgohttp.WithHeader("User-Agent", userAgent))
 
 		res, err := client.Get(serverURL)
 
@@ -477,7 +477,7 @@ func TestClient_UserAgent(t *testing.T) {
 
 		serverURL, captured := newCaptureServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("User-Agent", "custom-agent/1.0"))
+		client := mustNew(t, hqgohttp.WithHeader("User-Agent", "custom-agent/1.0"))
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -494,7 +494,7 @@ func TestClient_UserAgent(t *testing.T) {
 
 		serverURL, captured := newCaptureServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("User-Agent", "header-agent/1.0"))
+		client := mustNew(t, hqgohttp.WithHeader("User-Agent", "header-agent/1.0"))
 
 		res, err := client.Get(serverURL)
 
@@ -525,7 +525,7 @@ func TestClient_DoReturnsWrappedResponse(t *testing.T) {
 
 	require.NoError(t, err)
 
-	res, err := hqgohttp.New().Do(&hqgohttprequest.Request{Request: req})
+	res, err := mustNew(t).Do(&hqgohttprequest.Request{Request: req})
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -551,9 +551,8 @@ func TestClient_Std(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(3),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(3))
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, http.NoBody)
 
@@ -581,9 +580,8 @@ func TestClient_Std_POSTDoesNotRetryByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(3),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(3))
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, strings.NewReader("payload"))
 
@@ -613,7 +611,7 @@ func TestClient_RoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.RoundTrip(req)
 
@@ -625,7 +623,7 @@ func TestClient_RoundTrip(t *testing.T) {
 func TestClient_RoundTripNilRequest(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.RoundTrip(nil) //nolint:bodyclose // The request is rejected before a response exists.
 
@@ -665,7 +663,7 @@ func TestClient_PrepareRetry(t *testing.T) {
 
 	var hookAttempts []int
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithPrepareRetry(func(_ context.Context, req *http.Request, attempt int) error {
 			hookAttempts = append(hookAttempts, attempt)
@@ -703,7 +701,7 @@ func TestClient_PrepareRetryAborts(t *testing.T) {
 
 	signingErr := errors.New("signing failed")
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithPrepareRetry(func(context.Context, *http.Request, int) error {
 			return signingErr
@@ -738,7 +736,7 @@ func TestClient_RequestPrepareRetryOverride(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithPrepareRetry(func(context.Context, *http.Request, int) error {
 			return errors.New("client hook must be overridden")
@@ -774,7 +772,7 @@ func TestClient_Do_ResponseBodyOutlivesExecution(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithTimeout(30 * time.Second))
+	client := mustNew(t, hqgohttp.WithTimeout(30*time.Second))
 
 	res, err := client.Get(server.URL)
 
@@ -800,7 +798,7 @@ func TestClient_NoExecutionTimeoutByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -817,7 +815,7 @@ func TestClient_ResponseBodyCloseCancelsContext(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithTimeout(time.Hour))
+	client := mustNew(t, hqgohttp.WithTimeout(time.Hour))
 
 	res, err := client.Get(server.URL)
 
@@ -854,7 +852,7 @@ func TestClient_AttemptTimeout(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithRetryMaxAttempts(2),
 			hqgohttp.WithAttemptTimeout(50*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
@@ -884,7 +882,7 @@ func TestClient_AttemptTimeout(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithAttemptTimeout(150*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
 		)
@@ -906,7 +904,7 @@ func TestClient_AttemptTimeout(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithAttemptTimeout(time.Second),
 			hqgohttp.WithTimeout(100*time.Millisecond),
 		)
@@ -932,7 +930,7 @@ func TestClient_AttemptTimeout(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithAttemptTimeout(25*time.Millisecond),
 			hqgohttp.WithTimeout(2*time.Second),
 		)
@@ -959,7 +957,7 @@ func TestClient_ResponseBodyTimeout(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithTimeout(time.Second),
 		hqgohttp.WithResponseBodyTimeout(50*time.Millisecond),
 	)
@@ -992,9 +990,8 @@ func TestClient_Timeout(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithTimeout(150 * time.Millisecond),
-	)
+	client := mustNew(t,
+		hqgohttp.WithTimeout(150*time.Millisecond))
 
 	start := time.Now()
 
@@ -1033,7 +1030,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithTimeout(30 * time.Second))
+	client := mustNew(t, hqgohttp.WithTimeout(30*time.Second))
 
 	ctx, cancel := context.WithCancel(t.Context())
 
@@ -1082,7 +1079,7 @@ func TestClient_ExecutionTimeoutDoesNotBoundBody(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithTimeout(100*time.Millisecond),
 		hqgohttp.WithResponseBodyTimeout(0),
 	)
@@ -1112,7 +1109,7 @@ func TestClient_NoBodyResponseCancelsContext(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithTimeout(time.Hour))
+	client := mustNew(t, hqgohttp.WithTimeout(time.Hour))
 
 	res, err := client.Head(server.URL)
 
@@ -1150,7 +1147,7 @@ func TestClient_RateLimiter(t *testing.T) {
 
 		limiter := &fakeRateLimiter{calls: &calls}
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithRateLimiter(limiter),
 			hqgohttp.WithRetryMaxAttempts(3),
 		)
@@ -1180,7 +1177,7 @@ func TestClient_RateLimiter(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(hqgohttp.WithRateLimiter(limiter))
+		client := mustNew(t, hqgohttp.WithRateLimiter(limiter))
 
 		res, err := client.Get(server.URL)
 
@@ -1215,7 +1212,7 @@ func TestClient_RateLimiter(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(hqgohttp.WithRateLimiter(limiter))
+		client := mustNew(t, hqgohttp.WithRateLimiter(limiter))
 
 		res, err := client.Request().Context(ctx).URL(server.URL).Do()
 
@@ -1244,7 +1241,7 @@ func TestClient_OnRequestAndOnResponsePerRequest(t *testing.T) {
 
 	var requestAttempts, responseAttempts atomic.Int32
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Get(server.URL,
 		hqgohttp.WithRequestOnRequest(func(event hqgohttp.RequestEvent) {
@@ -1290,7 +1287,7 @@ func TestClient_ObservabilityCallbacks(t *testing.T) {
 		statuses         []int
 	)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithOnRequest(func(event hqgohttp.RequestEvent) {
 			assert.NotNil(t, event.Request)
@@ -1341,7 +1338,7 @@ func TestClient_MaxRequestsBeforeIdleClose(t *testing.T) {
 
 	transport := &closeCountingTransport{closes: &closes}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
 		hqgohttp.WithMaxRequestsBeforeIdleClose(2),
 	)
@@ -1370,7 +1367,7 @@ func TestClient_RetryExhaustionHandlerReturnsFinalResponse(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, err error, attemptCount int) (*http.Response, error) {
 			require.NotNil(t, resp)
@@ -1401,7 +1398,7 @@ func TestClient_RetryExhaustionHandlerReturnsError(t *testing.T) {
 
 	handledErr := errors.New("handled by the exhaustion handler")
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithOnRetryExhaustion(func(*http.Response, error, int) (*http.Response, error) {
 			return nil, handledErr
@@ -1431,7 +1428,7 @@ func TestClient_RetryExhaustionHandlerWithNoRetries(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(1),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, _ error, attemptCount int) (*http.Response, error) {
 			assert.Equal(t, 1, attemptCount)
@@ -1459,9 +1456,8 @@ func TestClient_RetryExhaustionHandlerPerRequestOverride(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(2),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(2))
 
 	res, err := client.Get(server.URL,
 		hqgohttp.WithRequestOnRetryExhaustion(func(resp *http.Response, _ error, _ int) (*http.Response, error) {
@@ -1486,13 +1482,12 @@ func TestClient_RetryExhaustionHandlerNotCalledOnSuccess(t *testing.T) {
 
 	var called atomic.Bool
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, _ error, _ int) (*http.Response, error) {
 			called.Store(true)
 
 			return resp, nil
-		}),
-	)
+		}))
 
 	res, err := client.Get(server.URL)
 
@@ -1521,7 +1516,7 @@ func TestClient_RetryExhaustionHandlerWithNonReplayableBody(t *testing.T) {
 	plain.GetBody = nil
 	plain.ContentLength = int64(len("payload"))
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithOnRetryExhaustion(func(resp *http.Response, _ error, _ int) (*http.Response, error) {
 			return resp, nil
@@ -1560,7 +1555,7 @@ func TestClient_Query(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Query(server.URL, payload)
 
@@ -1575,7 +1570,7 @@ func TestClient_Query(t *testing.T) {
 func TestClient_CloseRejectsFutureRequests(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	client.Close()
 
@@ -1617,7 +1612,7 @@ func TestClient_CloseCancelsInFlight(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	type result struct {
 		res *hqgohttp.Response
@@ -1661,7 +1656,7 @@ func TestClient_CloseCancelsBodyRead(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Get(server.URL)
 
@@ -1679,7 +1674,7 @@ func TestClient_CloseCancelsBodyRead(t *testing.T) {
 func TestClient_CloseIdempotent(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	var waitGroup sync.WaitGroup
 
@@ -1708,7 +1703,7 @@ func TestClient_CloseIdleConnections(t *testing.T) {
 
 	transport := &closeCountingTransport{closes: &closes}
 
-	client := hqgohttp.New(hqgohttp.WithHTTPClient(&http.Client{Transport: transport}))
+	client := mustNew(t, hqgohttp.WithHTTPClient(&http.Client{Transport: transport}))
 
 	client.CloseIdleConnections()
 
@@ -1719,7 +1714,7 @@ func TestClient_CloseIdleConnections(t *testing.T) {
 func TestClient_NilTransportClose(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New(hqgohttp.WithHTTPClient(&http.Client{}))
+	client := mustNew(t, hqgohttp.WithHTTPClient(&http.Client{}))
 
 	require.NotPanics(t, client.CloseIdleConnections)
 	require.NotPanics(t, client.Close)
@@ -1747,7 +1742,7 @@ func TestClient_NonReplayableBodyStopsWithOriginalOutcome(t *testing.T) {
 
 	req := &hqgohttprequest.Request{Request: plain}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
@@ -1793,7 +1788,7 @@ func TestClient_ReplayabilityGetBodyFailure(t *testing.T) {
 
 	req := &hqgohttprequest.Request{Request: plain}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
@@ -1853,7 +1848,7 @@ func TestClient_GetBodyIsRewoundBeforeNextAttempt(t *testing.T) {
 		}, nil
 	})
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
 		hqgohttp.WithRetryMaxAttempts(2),
 	)
@@ -1906,7 +1901,7 @@ func TestClient_ReusableBodyAfterPartialRead(t *testing.T) {
 		}, nil
 	})
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
 		hqgohttp.WithRetryMaxAttempts(2),
 	)
@@ -1932,7 +1927,7 @@ func TestClient_PostEmptyBody(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	for name, body := range map[string]any{
 		"empty string": "",
@@ -1986,7 +1981,7 @@ func TestClient_Redirect307ReplaysBody(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Post(server.URL+"/start", payload)
 
@@ -2026,9 +2021,8 @@ func TestClient_ReusableBodyAcrossRetries(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(2),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(2))
 
 	res, err := client.Put(server.URL, "the payload")
 
@@ -2052,9 +2046,8 @@ func TestClient_NonIdempotentNotRetriedByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(3),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(3))
 
 	res, err := client.Post(server.URL, "payload")
 
@@ -2079,7 +2072,7 @@ func TestClient_NonIdempotentRetriesOptOut(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryIdempotent(false),
 		hqgohttp.WithRetryMaxAttempts(3),
 	)
@@ -2120,7 +2113,7 @@ func TestClient_RedirectPolicyErrorIsFinal(t *testing.T) {
 
 	policyErr := errors.New("redirect refused by policy")
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithCheckRedirect(func(*http.Request, []*http.Request) error {
 			return policyErr
@@ -2177,7 +2170,7 @@ func TestClient_RetryPolicySeesResponse(t *testing.T) {
 		return
 	}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithRetryPolicy(policy),
 	)
@@ -2215,7 +2208,7 @@ func TestClient_OnRetryRequestOverride(t *testing.T) {
 
 	var clientCalls, requestCalls atomic.Int32
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithOnRetry(func(_ hqgohttp.RetryEvent) {
 			clientCalls.Add(1)
@@ -2251,7 +2244,7 @@ func TestClient_OnRetry(t *testing.T) {
 
 	var events []hqgohttp.RetryEvent
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 		hqgohttp.WithOnRetry(func(event hqgohttp.RetryEvent) {
 			events = append(events, event)
@@ -2296,7 +2289,7 @@ func TestClient_RetryPolicyAbort(t *testing.T) {
 		return
 	}
 
-	client := hqgohttp.New(hqgohttp.WithRetryPolicy(policy))
+	client := mustNew(t, hqgohttp.WithRetryPolicy(policy))
 
 	res, err := client.Get(server.URL)
 
@@ -2318,7 +2311,7 @@ func TestClient_RetryIdempotentRequestOverride(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryIdempotent(true),
 		hqgohttp.WithRetryMaxAttempts(3),
 	)
@@ -2360,9 +2353,8 @@ func TestClient_RetriesServerErrors(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(4),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(4))
 
 	res, err := client.Get(server.URL)
 
@@ -2402,7 +2394,7 @@ func TestClient_RetryIdempotent(t *testing.T) {
 
 			t.Cleanup(server.Close)
 
-			client := hqgohttp.New(
+			client := mustNew(t,
 				hqgohttp.WithRetryIdempotent(true),
 				hqgohttp.WithRetryMaxAttempts(3),
 			)
@@ -2444,9 +2436,8 @@ func TestClient_ExhaustedRetries(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithRetryMaxAttempts(3),
-	)
+	client := mustNew(t,
+		hqgohttp.WithRetryMaxAttempts(3))
 
 	res, err := client.Get(server.URL)
 
@@ -2505,7 +2496,7 @@ func TestClient_MalformedURLs(t *testing.T) {
 			return neturl.Parse(strings.ReplaceAll(raw, "%invalid", "%25invalid"))
 		})
 
-		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
+		client := mustNew(t, hqgohttp.WithURLParser(parser))
 
 		res, err := client.Get(server.URL + "/%invalid")
 
@@ -2525,7 +2516,7 @@ func TestClient_MalformedURLs(t *testing.T) {
 
 		server, captures := newServer(t)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Get(server.URL + "/w%0d%2e/")
 
@@ -2547,7 +2538,7 @@ func TestClient_MalformedURLs(t *testing.T) {
 
 		const rawQuery = "some'param=`'+OR+ORDER+BY+1--"
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Get(server.URL + "/with/path?" + rawQuery)
 
@@ -2613,7 +2604,7 @@ func TestClient_ProtocolHTTP1(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP1),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
 	)
@@ -2634,7 +2625,7 @@ func TestClient_ProtocolHTTP2(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
 	)
@@ -2656,9 +2647,8 @@ func TestClient_ProtocolHTTP2_h2c(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
-		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
-	)
+	client := mustNew(t,
+		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2))
 
 	res, err := client.Get(server.URL)
 
@@ -2687,7 +2677,7 @@ func TestClient_ProtocolHTTP3(t *testing.T) {
 		}, nil
 	})}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP3),
 		hqgohttp.WithHTTP3Client(h3Client),
 		withoutProxy(),
@@ -2711,7 +2701,7 @@ func TestClient_ProtocolAutoHTTP3(t *testing.T) {
 		return nil, errors.New("h3 unavailable")
 	})}
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
 		hqgohttp.WithHTTP3Client(h3Client),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
@@ -2734,7 +2724,7 @@ func withoutProxy() hqgohttp.ClientOptionFunc {
 func Test_Client_New_IgnoresNilOptions(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New(nil)
+	client := mustNew(t, nil)
 	require.NotNil(t, client)
 
 	client.Close()
@@ -2757,7 +2747,7 @@ func TestClient_URLParser(t *testing.T) {
 		return neturl.Parse(server.URL)
 	})
 
-	client := hqgohttp.New(hqgohttp.WithURLParser(parser))
+	client := mustNew(t, hqgohttp.WithURLParser(parser))
 
 	res, err := client.Get("custom://ignored")
 
@@ -2792,7 +2782,7 @@ func TestClient_RequestURLParserOverride(t *testing.T) {
 		return serverURL, nil
 	})
 
-	client := hqgohttp.New(hqgohttp.WithURLParser(clientParser))
+	client := mustNew(t, hqgohttp.WithURLParser(clientParser))
 
 	res, err := client.Get("ignored", hqgohttp.WithRequestURLParser(requestParser))
 
@@ -2817,7 +2807,12 @@ func ExampleClient_Get() {
 
 	defer server.Close()
 
-	client := hqgohttp.New()
+	client, err := hqgohttp.New()
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
 
 	res, err := client.Get(server.URL)
 	if err != nil {
@@ -2851,7 +2846,12 @@ func ExampleClient_Request() {
 
 	defer server.Close()
 
-	client := hqgohttp.New()
+	client, err := hqgohttp.New()
+	if err != nil {
+		fmt.Println(err)
+
+		return
+	}
 
 	res, err := client.Request().
 		Method(hqgohttpmethod.GET).
@@ -2876,4 +2876,16 @@ func ExampleClient_Request() {
 	fmt.Println(body)
 	// Output:
 	// GET value
+}
+
+// mustNew builds a client, failing the test when the options are invalid.
+func mustNew(tb testing.TB, ofs ...hqgohttp.ClientOptionFunc) (client *hqgohttp.Client) {
+	tb.Helper()
+
+	client, err := hqgohttp.New(ofs...)
+	if err != nil {
+		tb.Fatalf("mustNew(t, ) error = %v", err)
+	}
+
+	return client
 }

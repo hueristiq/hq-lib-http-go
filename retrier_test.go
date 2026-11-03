@@ -35,7 +35,7 @@ func TestClient_MaxAttemptsOneMakesSingleAttempt(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(1)).Get(server.URL)
+	res, err := mustNew(t, hqgohttp.WithRetryMaxAttempts(1)).Get(server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, res)
@@ -60,7 +60,7 @@ func TestClient_DefaultRetrierMakesThreeAttempts(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, res)
@@ -89,7 +89,7 @@ func TestClient_RetryMaxAttemptsTwo(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(2))
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2))
 
 	res, err := client.Get(server.URL)
 
@@ -129,7 +129,7 @@ func TestClient_RetryAfterWait(t *testing.T) {
 
 			var got time.Duration
 
-			client := hqgohttp.New(
+			client := mustNew(t,
 				hqgohttp.WithRetryMaxAttempts(2),
 				hqgohttp.WithOnRetry(func(event hqgohttp.RetryEvent) {
 					got = event.Wait
@@ -370,7 +370,7 @@ func TestClient_RetryError_RequestBodyLimit(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(2),
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithRetryErrorBodyLimit(64),
 	)
 
@@ -409,7 +409,7 @@ func TestClient_RetryError_History(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 	)
 
@@ -445,7 +445,7 @@ func TestClient_RetryError_TransportFailure(t *testing.T) {
 
 	server.Close()
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(2))
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2))
 
 	res, err := client.Get(serverURL)
 
@@ -471,7 +471,7 @@ func TestClient_RetryError_NoRetries(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(1))
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(1))
 
 	res, err := client.Get(server.URL)
 
@@ -496,7 +496,7 @@ func TestClient_RetryError_BodyLimit(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(2),
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithRetryErrorBodyLimit(4),
 	)
 
@@ -524,7 +524,7 @@ func TestClient_RetryError(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(2),
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithRetryErrorBodyLimit(hqgohttp.RecommendedRetryErrorBodyLimit),
 	)
 
@@ -560,7 +560,7 @@ func TestClient_RetryError_BodyDisabledByDefault(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Get(server.URL)
 

@@ -76,7 +76,7 @@ func TestLoggerSuccess(t *testing.T) {
 	defer server.Close()
 
 	logger := &captureLogger{}
-	client := New(WithLogger(logger))
+	client := mustNew(t, WithLogger(logger))
 
 	response, err := client.Get(server.URL)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestLoggerRetry(t *testing.T) {
 
 	logger := &captureLogger{}
 
-	client := New(WithRetryMaxAttempts(2), WithLogger(logger))
+	client := mustNew(t, WithRetryMaxAttempts(2), WithLogger(logger))
 
 	response, err := client.Get(server.URL)
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestLoggerFailure(t *testing.T) {
 
 	logger := &captureLogger{}
 
-	client := New(WithRetryMaxAttempts(1), WithLogger(logger))
+	client := mustNew(t, WithRetryMaxAttempts(1), WithLogger(logger))
 
 	_, err := client.Get(server.URL)
 	require.Error(t, err)
@@ -157,7 +157,7 @@ func TestLoggerRequestOverride(t *testing.T) {
 	clientLogger := &captureLogger{}
 	requestLogger := &captureLogger{}
 
-	client := New(WithLogger(clientLogger))
+	client := mustNew(t, WithLogger(clientLogger))
 
 	response, err := client.Get(server.URL, WithRequestLogger(requestLogger))
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestLoggerRedactsURLPassword(t *testing.T) {
 	requestURL.User = url.UserPassword("user", "secret")
 
 	logger := &captureLogger{}
-	client := New(WithLogger(logger))
+	client := mustNew(t, WithLogger(logger))
 
 	response, err := client.Get(requestURL.String())
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestLoggerDisabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New()
+	client := mustNew(t)
 
 	response, err := client.Get(server.URL)
 	require.NoError(t, err)

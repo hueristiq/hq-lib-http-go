@@ -29,13 +29,12 @@ func TestClient_WithDialContext(t *testing.T) {
 
 	dialer := &net.Dialer{}
 
-	client := New(
+	client := mustNew(t,
 		WithDialContext(func(ctx context.Context, network, address string) (net.Conn, error) {
 			called.Store(true)
 
 			return dialer.DialContext(ctx, network, address)
-		}),
-	)
+		}))
 
 	res, err := client.Get(server.URL)
 
@@ -53,14 +52,14 @@ func TestClient_WithDialContext(t *testing.T) {
 func TestClient_WithDialer(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithDialer(&net.Dialer{Timeout: time.Second}))
+	client := mustNew(t, WithDialer(&net.Dialer{Timeout: time.Second}))
 
 	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.NotNil(t, transport.DialContext)
 
-	client = New(WithDialer(nil))
+	client = mustNew(t, WithDialer(nil))
 
 	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
@@ -71,7 +70,7 @@ func TestClient_WithDialer(t *testing.T) {
 func TestClient_WithTLSHandshakeTimeout(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithTLSHandshakeTimeout(2 * time.Second))
+	client := mustNew(t, WithTLSHandshakeTimeout(2*time.Second))
 
 	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
@@ -84,14 +83,14 @@ func TestClient_WithTLSHandshakeTimeout(t *testing.T) {
 	assert.Equal(t, 2*time.Second, fallback.TLSHandshakeTimeout,
 		"Expected the fallback to inherit the handshake timeout")
 
-	client = New(WithTLSHandshakeTimeout(0))
+	client = mustNew(t, WithTLSHandshakeTimeout(0))
 
 	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
 	require.True(t, ok)
 	assert.Zero(t, transport.TLSHandshakeTimeout)
 
-	client = New()
+	client = mustNew(t)
 
 	transport, ok = client.config.HTTPClient.Transport.(*http.Transport)
 
@@ -112,7 +111,7 @@ func TestClient_WithTransportBuilder(t *testing.T) {
 		return transport
 	}
 
-	client := New(WithTransportBuilder(builder))
+	client := mustNew(t, WithTransportBuilder(builder))
 
 	assert.Equal(t, ProtocolAuto, gotProtocol)
 
@@ -133,7 +132,7 @@ func TestClient_WithTransportBuilderNilResultKeepsTransport(t *testing.T) {
 
 	var original *http.Transport
 
-	client := New(WithTransportBuilder(func(_ Protocol, transport *http.Transport) *http.Transport {
+	client := mustNew(t, WithTransportBuilder(func(_ Protocol, transport *http.Transport) *http.Transport {
 		original = transport
 
 		return nil
@@ -154,7 +153,7 @@ func TestClient_WithTransportBuilderIgnoredWithTransport(t *testing.T) {
 		return newOKResponse("custom"), nil
 	})
 
-	client := New(
+	client := mustNew(t,
 		WithTransport(custom),
 		WithTransportBuilder(func(_ Protocol, transport *http.Transport) *http.Transport {
 			called.Store(true)
@@ -172,7 +171,7 @@ func TestClient_WithTransportBuilderSkipsHTTP3(t *testing.T) {
 
 	var called atomic.Bool
 
-	New(
+	mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		WithHTTP3Client(&http.Client{}),
 		WithTransportBuilder(func(_ Protocol, transport *http.Transport) *http.Transport {
@@ -194,7 +193,7 @@ func TestClient_WithCookieJarClonesCustomClient(t *testing.T) {
 
 	custom := &http.Client{}
 
-	client := New(
+	client := mustNew(t,
 		WithHTTPClient(custom),
 		WithCookieJar(jar),
 	)
@@ -210,7 +209,7 @@ func TestClient_WithCheckRedirectClonesCustomClient(t *testing.T) {
 
 	custom := &http.Client{}
 
-	client := New(
+	client := mustNew(t,
 		WithHTTPClient(custom),
 		WithCheckRedirect(func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -232,7 +231,7 @@ func TestClient_TransportPrecedence(t *testing.T) {
 
 	custom := &http.Transport{}
 
-	client := New(
+	client := mustNew(t,
 		WithTransport(custom),
 		WithProxy(func(_ *http.Request) (*url.URL, error) {
 			proxyCalled.Store(true)
@@ -254,7 +253,7 @@ func TestClient_TransportPrecedence(t *testing.T) {
 func TestClient_WithProxyDisabled(t *testing.T) {
 	t.Parallel()
 
-	client := New(withoutProxy())
+	client := mustNew(t, withoutProxy())
 
 	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
@@ -273,7 +272,7 @@ func TestClient_WithProxy(t *testing.T) {
 
 	var called bool
 
-	client := New(WithProxy(func(_ *http.Request) (*url.URL, error) {
+	client := mustNew(t, WithProxy(func(_ *http.Request) (*url.URL, error) {
 		called = true
 
 		return proxyURL, nil
@@ -295,7 +294,7 @@ func TestClient_WithProxySelector(t *testing.T) {
 
 	proxyURL := &url.URL{Scheme: "http", Host: "proxy.example"}
 
-	client := New(fixedProxy(proxyURL))
+	client := mustNew(t, fixedProxy(proxyURL))
 
 	transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
 
@@ -310,7 +309,7 @@ func TestClient_WithProxySelector(t *testing.T) {
 func TestClient_WithTransportWrapperNilFallsBack(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithTransportWrapper(func(http.RoundTripper) http.RoundTripper {
+	client := mustNew(t, WithTransportWrapper(func(http.RoundTripper) http.RoundTripper {
 		return nil
 	}))
 

@@ -79,7 +79,7 @@ func TestRequestBuilder_EndToEnd(t *testing.T) {
 
 	serverURL := newMirrorServer(t, &mirror)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Request().
 		Method(hqgohttpmethod.POST).
@@ -118,7 +118,7 @@ func TestRequestBuilder_ParamPreservesRawQuery(t *testing.T) {
 
 	serverURL := newMirrorServer(t, &mirror)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	const rawQuery = "b=2&sig=abc%2Fdef&empty="
 
@@ -157,7 +157,7 @@ func TestRequestBuilder_EmptyBodyContentLength(t *testing.T) {
 
 		serverURL, contentLength, chunked := newRecorder(t)
 
-		res, err := hqgohttp.New().Post(serverURL, "")
+		res, err := mustNew(t).Post(serverURL, "")
 
 		require.NoError(t, err)
 		require.NoError(t, res.Body.Close())
@@ -171,7 +171,7 @@ func TestRequestBuilder_EmptyBodyContentLength(t *testing.T) {
 
 		serverURL, contentLength, chunked := newRecorder(t)
 
-		res, err := hqgohttp.New().Post(serverURL, []byte{})
+		res, err := mustNew(t).Post(serverURL, []byte{})
 
 		require.NoError(t, err)
 		require.NoError(t, res.Body.Close())
@@ -185,7 +185,7 @@ func TestRequestBuilder_EmptyBodyContentLength(t *testing.T) {
 
 		serverURL, contentLength, chunked := newRecorder(t)
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(serverURL).
 			Form(url.Values{}).
@@ -211,7 +211,7 @@ func TestRequestBuilder_ReaderBodyReusable(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	builder := hqgohttp.New().Request().
+	builder := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL(server.URL).
 		Body(strings.NewReader("payload"))
@@ -231,7 +231,7 @@ func TestRequestBuilder_ReaderBodyError(t *testing.T) {
 
 	readErr := errors.New("read failed")
 
-	res, err := hqgohttp.New().Request().
+	res, err := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL("http://example.com").
 		Body(iotest.ErrReader(readErr)).
@@ -254,7 +254,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -278,7 +278,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -299,7 +299,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -320,7 +320,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -341,7 +341,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("X-Default", "client-value"))
+		client := mustNew(t, hqgohttp.WithHeader("X-Default", "client-value"))
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -361,7 +361,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("X-Default", "client-value"))
+		client := mustNew(t, hqgohttp.WithHeader("X-Default", "client-value"))
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -380,7 +380,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -400,7 +400,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("Host", "default.example"))
+		client := mustNew(t, hqgohttp.WithHeader("Host", "default.example"))
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -419,7 +419,7 @@ func TestRequestBuilder_Headers(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("Host", "default.example"))
+		client := mustNew(t, hqgohttp.WithHeader("Host", "default.example"))
 
 		res, err := client.Request().
 			URL(serverURL).
@@ -440,7 +440,7 @@ func TestRequestBuilder_DefaultMethod(t *testing.T) {
 
 	serverURL := newMirrorServer(t, &mirror)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Request().
 		URL(serverURL).
@@ -455,7 +455,7 @@ func TestRequestBuilder_DefaultMethod(t *testing.T) {
 func TestRequestBuilder_Invalid(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	t.Run("no URL configured", func(t *testing.T) {
 		t.Parallel()
@@ -498,7 +498,7 @@ func TestRequestBuilder_NilContext(t *testing.T) {
 
 	serverURL := newMirrorServer(t, &mirror)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	var nilCtx context.Context
 
@@ -524,7 +524,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().URL(serverURL).Context(ctx).Do()
 
@@ -541,7 +541,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 
 		serverURL := newOKServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithContext(ctx))
+		client := mustNew(t, hqgohttp.WithContext(ctx))
 
 		res, err := client.Get(serverURL)
 
@@ -558,7 +558,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		res, err := client.Request().Context(t.Context()).URL(serverURL).Do()
 
@@ -574,7 +574,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		res, err := client.Request().Context(context.Background()).URL(serverURL).Do()
 
@@ -590,7 +590,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		res, err := client.Request().Context(nil).URL(serverURL).Do() //nolint:staticcheck // Context(nil) is an explicit override.
 
@@ -606,7 +606,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		req, err := hqgohttprequest.New(context.Background(), http.MethodGet, serverURL, nil)
 
@@ -626,7 +626,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		req, err := hqgohttprequest.New(nil, http.MethodGet, serverURL, nil) //nolint:staticcheck // A nil context means no explicit context.
 
@@ -646,7 +646,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		defaultCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(hqgohttp.WithContext(defaultCtx))
+		client := mustNew(t, hqgohttp.WithContext(defaultCtx))
 
 		raw, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serverURL, http.NoBody)
 
@@ -663,7 +663,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 
 		serverURL := newOKServer(t)
 
-		client := hqgohttp.New(hqgohttp.WithContext(nil)) //nolint:staticcheck // WithContext(nil) deliberately exercises the no-default path.
+		client := mustNew(t, hqgohttp.WithContext(nil)) //nolint:staticcheck // WithContext(nil) deliberately exercises the no-default path.
 
 		res, err := client.Get(serverURL)
 
@@ -679,7 +679,7 @@ func TestRequestBuilder_Context(t *testing.T) {
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithContext(canceled),
 			hqgohttp.WithContext(t.Context()),
 		)
@@ -722,7 +722,7 @@ func TestRequestBuilder_JSON(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(server.URL).
 			JSON(jsonInputPayload{Name: "alice", Age: 30}).
@@ -743,7 +743,7 @@ func TestRequestBuilder_JSON(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(server.URL).
 			SetHeader("Content-Type", "application/vnd.api+json").
@@ -764,7 +764,7 @@ func TestRequestBuilder_JSON(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		client := hqgohttp.New(hqgohttp.WithHeader("Content-Type", "text/plain"))
+		client := mustNew(t, hqgohttp.WithHeader("Content-Type", "text/plain"))
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -788,7 +788,7 @@ func TestRequestBuilder_JSON(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(server.URL).
 			JSON(func() {}).
@@ -818,7 +818,7 @@ func TestRequestBuilder_XML(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Request().
+	res, err := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL(server.URL).
 		XML(xmlInputPayload{Name: "alice", Age: 30}).
@@ -850,7 +850,7 @@ func TestRequestBuilder_Form(t *testing.T) {
 		"tag":  {"one", "two"},
 	}
 
-	res, err := hqgohttp.New().Request().
+	res, err := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL(server.URL).
 		Form(values).
@@ -903,7 +903,7 @@ func TestRequestBuilder_Multipart(t *testing.T) {
 		Field("description", "a note").
 		File("upload", "note.txt", strings.NewReader("file-content"))
 
-	res, err := hqgohttp.New().Request().
+	res, err := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL(server.URL).
 		Multipart(form).
@@ -962,7 +962,7 @@ func TestRequestBuilder_MultipartRetry(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithRetryIdempotent(false),
 	)
@@ -988,7 +988,7 @@ func TestRequestBuilder_MultipartNilReader(t *testing.T) {
 
 	form := hqgohttp.NewMultipartForm().File("upload", "note.txt", nil)
 
-	res, err := hqgohttp.New().Request().
+	res, err := mustNew(t).Request().
 		Method(hqgohttpmethod.POST).
 		URL("https://example.com").
 		Multipart(form).
@@ -1024,7 +1024,7 @@ func TestRequestBuilder_MultipartBodyLimit(t *testing.T) {
 
 	form := hqgohttp.NewMultipartForm().File("upload", "big.bin", reader)
 
-	res, err := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(limit)).Request().
+	res, err := mustNew(t, hqgohttp.WithMaxRequestBodySize(limit)).Request().
 		Method(hqgohttpmethod.POST).
 		URL("https://example.com").
 		Multipart(form).
@@ -1059,7 +1059,7 @@ func TestRequestBuilder_LastBodySetterWins(t *testing.T) {
 	t.Run("JSON after Body", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(server.URL).
 			Body("raw").
@@ -1073,7 +1073,7 @@ func TestRequestBuilder_LastBodySetterWins(t *testing.T) {
 	t.Run("Body after JSON", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(server.URL).
 			JSON(jsonInputPayload{Name: "alice"}).
@@ -1112,7 +1112,7 @@ func TestRequestBuilder_URLResolution_HostPort(t *testing.T) {
 			return url.Parse("http://" + raw)
 		})
 
-		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
+		client := mustNew(t, hqgohttp.WithURLParser(parser))
 
 		res, err := client.Request().
 			URL(strings.TrimPrefix(serverURL, "http://") + "/direct").
@@ -1137,7 +1137,7 @@ func TestRequestBuilder_URLResolution_HostPort(t *testing.T) {
 			return url.Parse("http://" + raw)
 		})
 
-		client := hqgohttp.New(hqgohttp.WithURLParser(parser))
+		client := mustNew(t, hqgohttp.WithURLParser(parser))
 
 		res, err := client.Request().
 			URL("localhost:" + port + "/direct").
@@ -1159,7 +1159,7 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		host := serverURL[len("http://"):]
 
@@ -1184,7 +1184,7 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL + "/search?q=go&x=1").
@@ -1202,7 +1202,7 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			URL(serverURL + "/jump?next=https://example.com").
@@ -1220,7 +1220,7 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 
 		serverURL := newMirrorServer(t, &mirror)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		parser := hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
 			return url.Parse(strings.ReplaceAll(raw, "%zz", "%25zz"))
@@ -1241,7 +1241,7 @@ func TestRequestBuilder_URLResolution(t *testing.T) {
 func TestRequestBuilder_PathOnlyURLRejected(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	res, err := client.Request().
 		URL("/users").
@@ -1286,7 +1286,7 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 
 		serverURL, attempts := newServer(t)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithMaxRequestBodySize(4),
 		)
 
@@ -1305,7 +1305,7 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 
 		serverURL, _ := newServer(t)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithMaxRequestBodySize(4),
 		)
 
@@ -1322,7 +1322,7 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 
 		serverURL, attempts := newServer(t)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithMaxRequestBodySize(4),
 		)
 
@@ -1349,7 +1349,7 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 
 		require.NoError(t, err)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithMaxRequestBodySize(4),
 		)
 
@@ -1368,7 +1368,7 @@ func TestRequestBuilder_MaxRequestBodySize(t *testing.T) {
 
 		serverURL, attempts := newServer(t)
 
-		client := hqgohttp.New(
+		client := mustNew(t,
 			hqgohttp.WithMaxRequestBodySize(4),
 		)
 
@@ -1400,7 +1400,7 @@ func TestRequestBuilder_BodyReaderHonorsMaxRequestBodySize(t *testing.T) {
 
 		reader := &countingReader{Reader: strings.NewReader(strings.Repeat("x", size))}
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(limit)).Request().
+		res, err := mustNew(t, hqgohttp.WithMaxRequestBodySize(limit)).Request().
 			Method(hqgohttpmethod.POST).
 			URL("https://example.com").
 			Body(reader).
@@ -1420,7 +1420,7 @@ func TestRequestBuilder_BodyReaderHonorsMaxRequestBodySize(t *testing.T) {
 
 		reader := &countingReader{Reader: strings.NewReader(strings.Repeat("x", size))}
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(limit)).Post("https://example.com", reader)
+		res, err := mustNew(t, hqgohttp.WithMaxRequestBodySize(limit)).Post("https://example.com", reader)
 
 		if res != nil {
 			require.NoError(t, res.Body.Close())
@@ -1438,7 +1438,7 @@ func TestRequestBuilder_EncoderErrors(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL("https://example.com").
 			JSON(make(chan int)).
@@ -1455,7 +1455,7 @@ func TestRequestBuilder_EncoderErrors(t *testing.T) {
 	t.Run("xml", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL("https://example.com").
 			XML(make(chan int)).
@@ -1473,7 +1473,7 @@ func TestRequestBuilder_EncoderErrors(t *testing.T) {
 func TestRequestBuilder_XMLAndFormHonorMaxRequestBodySize(t *testing.T) {
 	t.Parallel()
 
-	client := hqgohttp.New(hqgohttp.WithMaxRequestBodySize(4))
+	client := mustNew(t, hqgohttp.WithMaxRequestBodySize(4))
 
 	t.Run("xml", func(t *testing.T) {
 		t.Parallel()
@@ -1588,7 +1588,7 @@ func TestMultipartForm_Stream(t *testing.T) {
 
 		require.NoError(t, err)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1619,7 +1619,7 @@ func TestRequestBuilder_BodyStreamIsNotReplayed(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithRetryMaxAttempts(3),
 	)
 
@@ -1677,7 +1677,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1699,7 +1699,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1721,7 +1721,7 @@ func TestRequestBuilder_BodyStream(t *testing.T) {
 
 		serverURL := newServer(t, &gotLength)
 
-		client := hqgohttp.New()
+		client := mustNew(t)
 
 		res, err := client.Request().
 			Method(hqgohttpmethod.POST).
@@ -1914,7 +1914,7 @@ func TestStripSensitiveHeadersOnRedirect_MultiHop(t *testing.T) {
 	}))
 	t.Cleanup(origin.Close)
 
-	client := hqgohttp.New(
+	client := mustNew(t,
 		hqgohttp.WithCheckRedirect(hqgohttp.StripSensitiveHeadersOnRedirect("X-Api-Key")),
 	)
 
@@ -1954,7 +1954,7 @@ func Test_Client_Do_IgnoresNilRequestOptions(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 	t.Cleanup(client.Close)
 
 	req, err := hqgohttprequest.New(context.Background(), http.MethodGet, server.URL, nil)
@@ -1988,7 +1988,7 @@ func TestMultipartForm_ClosesFileReaders(t *testing.T) {
 
 		form := hqgohttp.NewMultipartForm().File("upload", "file.txt", reader)
 
-		res, err := hqgohttp.New().Request().
+		res, err := mustNew(t).Request().
 			Method(hqgohttpmethod.POST).
 			URL(newOKServer(t)).
 			Multipart(form).

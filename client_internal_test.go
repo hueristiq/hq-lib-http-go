@@ -73,7 +73,7 @@ func TestClient_CloseIdleConnectionsIfDue(t *testing.T) {
 
 		transport := &closeCountingTransport{closes: &closes}
 
-		client := New(WithHTTPClient(&http.Client{Transport: transport}))
+		client := mustNew(t, WithHTTPClient(&http.Client{Transport: transport}))
 
 		for range 10 {
 			client.closeIdleConnectionsIfDue()
@@ -89,7 +89,7 @@ func TestClient_CloseIdleConnectionsIfDue(t *testing.T) {
 
 		transport := &closeCountingTransport{closes: &closes}
 
-		client := New(
+		client := mustNew(t,
 			WithHTTPClient(&http.Client{Transport: transport}),
 			WithMaxRequestsBeforeIdleClose(3),
 		)
@@ -204,7 +204,7 @@ func TestClient_RetriedResponseBodyIsDrainedWithinLimit(t *testing.T) {
 			return
 		})
 
-		client = New(
+		client = mustNew(t,
 			WithHTTPClient(&http.Client{Transport: transport}),
 			WithRetryMaxAttempts(3),
 		)
@@ -280,9 +280,8 @@ func TestClient_Do_TransportReturnsNoOutcome(t *testing.T) {
 		return nil, nil //nolint:nilnil // Exercises the transport contract violation guard.
 	})
 
-	client := New(
-		WithHTTPClient(&http.Client{Transport: transport}),
-	)
+	client := mustNew(t,
+		WithHTTPClient(&http.Client{Transport: transport}))
 
 	req, err := hqgohttprequest.New(t.Context(), "GET", "http://example.com/", nil)
 
@@ -343,7 +342,7 @@ func TestWithTLSConfig_Clones(t *testing.T) {
 
 			config := &tls.Config{ServerName: "original.example"}
 
-			client := New(WithProtocol(protocol), WithTLSConfig(config))
+			client := mustNew(t, WithProtocol(protocol), WithTLSConfig(config))
 
 			config.ServerName = "mutated.example"
 
@@ -390,10 +389,14 @@ func TestClientOptions_WithHeader(t *testing.T) {
 func TestClient_ExecutionTimeoutDefaultsToThirtySeconds(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, 30*time.Second, New().config.Timeout)
-	assert.Zero(t, New(WithTimeout(0)).config.Timeout)
-	assert.Zero(t, New(WithTimeout(-time.Second)).config.Timeout)
-	assert.Equal(t, 10*time.Second, New(WithTimeout(10*time.Second)).config.Timeout)
+	assert.Equal(t, 30*time.Second, mustNew(t).config.Timeout)
+	assert.Zero(t, mustNew(t, WithTimeout(0)).config.Timeout)
+
+	if _, err := New(WithTimeout(-time.Second)); err == nil {
+		t.Error("New(WithTimeout(-1s)): expected a validation error")
+	}
+
+	assert.Equal(t, 10*time.Second, mustNew(t, WithTimeout(10*time.Second)).config.Timeout)
 }
 
 func TestWithAttemptTimeout(t *testing.T) {
@@ -431,14 +434,12 @@ func TestSameRoundTripper(t *testing.T) {
 	assert.False(t, sameRoundTripper(first, second), "Expected function transports to be uncomparable")
 }
 
-func TestClientOptions_NormalizeResponseBodyTimeout(t *testing.T) {
+func TestClientOptions_ValidateRejectsNegative(t *testing.T) {
 	t.Parallel()
 
 	opts := &clientOptions{ResponseBodyTimeout: -time.Second}
 
-	opts.normalize()
-
-	assert.Zero(t, opts.ResponseBodyTimeout)
+	assert.Error(t, opts.validate())
 }
 
 func TestRequestOptions_Normalize(t *testing.T) {
@@ -612,31 +613,22 @@ func TestNew_ProtocolSelection(t *testing.T) {
 				assert.Equal(t, "custom", readRawBody(t, res))
 			},
 		},
-		{
-			name:    "invalid protocol falls back to auto",
-			options: []ClientOptionFunc{WithProtocol(Protocol(99))},
-			validate: func(t *testing.T, client *Client) {
-				t.Helper()
-
-				transport, ok := client.config.HTTPClient.Transport.(*http.Transport)
-
-				require.True(t, ok)
-				assert.Nil(t, transport.Protocols)
-				assert.NotNil(t, client.fallbackHTTPClient)
-			},
-		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			client := New(test.options...)
+			client := mustNew(t, test.options...)
 
 			require.NotNil(t, client)
 
 			test.validate(t, client)
 		})
+	}
+
+	if _, err := New(WithProtocol(Protocol(99))); err == nil {
+		t.Error("New(WithProtocol(99)): expected a validation error")
 	}
 }
 
@@ -750,7 +742,7 @@ func TestClient_Do_AutoHTTP3RedirectAbortIsFinal(t *testing.T) {
 
 	redirectErr := errors.New("redirects are forbidden")
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolAutoHTTP3),
 		h3Option,
 		withoutProxy(),
@@ -796,7 +788,7 @@ func TestClient_Do_AutoHTTP3DoesNotFallBackOnPermanentError(t *testing.T) {
 		countingClient(&autoCalls, "auto"),
 	)
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolAutoHTTP3),
 		h3Option,
 		withoutProxy(),
@@ -836,7 +828,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 			countingClient(&autoCalls, "auto"),
 		)
 
-		client := New(
+		client := mustNew(t,
 			WithProtocol(ProtocolAutoHTTP3),
 			h3Option,
 			withoutProxy(),
@@ -875,7 +867,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 			countingClient(&autoCalls, "auto"),
 		)
 
-		client := New(
+		client := mustNew(t,
 			WithProtocol(ProtocolAutoHTTP3),
 			WithHTTP3FallbackTTL(0),
 			h3Option,
@@ -899,7 +891,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	})
 
 	t.Run("an expired entry is discarded", func(t *testing.T) {
-		client := New(
+		client := mustNew(t,
 			WithProtocol(ProtocolAutoHTTP3),
 			WithHTTP3FallbackTTL(time.Minute),
 		)
@@ -917,7 +909,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	})
 
 	t.Run("a success clears an entry", func(t *testing.T) {
-		client := New(
+		client := mustNew(t,
 			WithProtocol(ProtocolAutoHTTP3),
 			WithHTTP3FallbackTTL(time.Minute),
 		)
@@ -932,7 +924,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 	})
 
 	t.Run("expired entries are pruned periodically", func(t *testing.T) {
-		client := New(
+		client := mustNew(t,
 			WithProtocol(ProtocolAutoHTTP3),
 			WithHTTP3FallbackTTL(time.Minute),
 		)
@@ -966,7 +958,7 @@ func TestClient_HTTP3FailureCache(t *testing.T) {
 func TestClient_HTTP3FailureCache_EmptyHost(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithProtocol(ProtocolAutoHTTP3))
+	client := mustNew(t, WithProtocol(ProtocolAutoHTTP3))
 
 	client.recordHTTP3Failure("")
 	assert.False(t, client.http3RecentlyFailed(""))
@@ -999,7 +991,7 @@ func TestClient_Do_AutoHTTP3FallsBack(t *testing.T) {
 		},
 	)
 
-	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
+	client := mustNew(t, WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com", nil)
 
@@ -1045,7 +1037,7 @@ func TestClient_Do_AutoHTTP3RewindsBody(t *testing.T) {
 		},
 	)
 
-	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
+	client := mustNew(t, WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodPut, "https://example.com", []byte("payload"))
 
@@ -1083,7 +1075,7 @@ func TestClient_Do_AutoHTTP3DoesNotFallBackOnContextError(t *testing.T) {
 		},
 	)
 
-	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
+	client := mustNew(t, WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com", nil)
 
@@ -1125,9 +1117,8 @@ func TestClient_Do_FallbackSkippedForNonIdempotent(t *testing.T) {
 	})
 
 	t.Run("default idempotent-only", func(t *testing.T) {
-		client := New(
-			WithHTTPClient(&http.Client{Transport: primary}),
-		)
+		client := mustNew(t,
+			WithHTTPClient(&http.Client{Transport: primary}))
 
 		req, err := hqgohttprequest.New(t.Context(), http.MethodPost, "http://example.com/", nil)
 
@@ -1146,7 +1137,7 @@ func TestClient_Do_FallbackSkippedForNonIdempotent(t *testing.T) {
 	})
 
 	t.Run("opt out", func(t *testing.T) {
-		client := New(
+		client := mustNew(t,
 			WithHTTPClient(&http.Client{Transport: primary}),
 			WithRetryIdempotent(false),
 		)
@@ -1198,7 +1189,7 @@ func TestClient_Do_FallbackSkippedForNonResendableBody(t *testing.T) {
 	})
 
 	// A policy that never retries keeps the attempt's original error visible.
-	client := New(
+	client := mustNew(t,
 		WithHTTPClient(&http.Client{Transport: primary}),
 		WithRetryPolicy(func(_ context.Context, _ *http.Request, _ *http.Response, _ error, _ int) (retry bool, rerr error) {
 			return
@@ -1237,7 +1228,7 @@ func TestClient_Do_AutoHTTP3SkipsH3WhenProxied(t *testing.T) {
 
 	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolAutoHTTP3),
 		h3Option,
 		fixedProxy(&url.URL{Scheme: "http", Host: "proxy.example"}),
@@ -1262,7 +1253,7 @@ func TestClient_Do_HTTP3RejectsProxy(t *testing.T) {
 
 	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		h3Option,
 		fixedProxy(&url.URL{Scheme: "http", Host: "proxy.example"}),
@@ -1289,7 +1280,7 @@ func TestClient_Do_AutoHTTP3UsesH3WhenSelectorReturnsNil(t *testing.T) {
 
 	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), countingClient(&autoCalls, "auto"))
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolAutoHTTP3),
 		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
@@ -1316,7 +1307,7 @@ func TestClient_Do_HTTP3UsesH3WhenProxyDisabled(t *testing.T) {
 
 	h3Option := swapHTTP3Seams(t, countingClient(&h3Calls, "h3"), nil)
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		h3Option,
 		withoutProxy(),
@@ -1344,7 +1335,7 @@ func TestClient_Do_HTTP3IgnoresTransport(t *testing.T) {
 		return newOKResponse("custom"), nil
 	})
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		h3Option,
 		WithTransport(custom),
@@ -1371,7 +1362,7 @@ func TestClient_Do_HTTP3ProxySelectorError(t *testing.T) {
 
 	proxyErr := errors.New("proxy selector failed")
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
@@ -1402,7 +1393,7 @@ func TestClient_Do_AutoHTTP3UsesAutoOnProxySelectorError(t *testing.T) {
 
 	proxyErr := errors.New("proxy selector failed")
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolAutoHTTP3),
 		h3Option,
 		WithProxy(func(*http.Request) (*url.URL, error) {
@@ -1454,9 +1445,8 @@ func TestClient_Do_FallbackJoinsErrors(t *testing.T) {
 		return
 	}
 
-	client := New(
-		WithHTTPClient(&http.Client{Transport: primary}),
-	)
+	client := mustNew(t,
+		WithHTTPClient(&http.Client{Transport: primary}))
 
 	req, err := hqgohttprequest.New(t.Context(), "GET", "http://example.com/", nil)
 
@@ -1506,9 +1496,8 @@ func TestClient_Do_OtherTransportErrorsDoNotFallBack(t *testing.T) {
 		return
 	})
 
-	client := New(
-		WithHTTPClient(&http.Client{Transport: primary}),
-	)
+	client := mustNew(t,
+		WithHTTPClient(&http.Client{Transport: primary}))
 
 	req, err := hqgohttprequest.New(t.Context(), "GET", "http://example.com/", nil)
 
@@ -1544,7 +1533,7 @@ func TestClient_Do_FallbackPreservesCustomClient(t *testing.T) {
 		Timeout: 5 * time.Second,
 	}
 
-	client := New(WithHTTPClient(custom))
+	client := mustNew(t, WithHTTPClient(custom))
 
 	require.NotNil(t, client.fallbackHTTPClient)
 
@@ -1596,7 +1585,7 @@ func TestClient_Do_HTTP1BrokenTransportFallsBack(t *testing.T) {
 		return
 	})
 
-	client := New(WithHTTPClient(&http.Client{Transport: primary}))
+	client := mustNew(t, WithHTTPClient(&http.Client{Transport: primary}))
 
 	req, err := hqgohttprequest.New(t.Context(), "GET", "http://example.com/", nil)
 
@@ -1666,7 +1655,7 @@ func TestClient_Do_FallbackResendsReusableBody(t *testing.T) {
 		return
 	})
 
-	client := New(WithHTTPClient(&http.Client{Transport: primary}))
+	client := mustNew(t, WithHTTPClient(&http.Client{Transport: primary}))
 
 	req, err := hqgohttprequest.New(t.Context(), "PUT", "http://example.com/", "the payload")
 
@@ -1761,7 +1750,7 @@ func TestClient_RetryErrorBodyReadError(t *testing.T) {
 		}, nil
 	})
 
-	client := New(
+	client := mustNew(t,
 		WithHTTPClient(&http.Client{Transport: transport}),
 		WithRetryErrorBodyLimit(16),
 	)
@@ -1784,7 +1773,7 @@ func TestClient_Do_AutoHTTP3WithoutClientUsesAuto(t *testing.T) {
 
 	h3Option := swapHTTP3Seams(t, nil, countingClient(&autoCalls, "auto"))
 
-	client := New(WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
+	client := mustNew(t, WithProtocol(ProtocolAutoHTTP3), h3Option, withoutProxy())
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com/", nil)
 
@@ -1801,7 +1790,7 @@ func TestClient_Do_AutoHTTP3WithoutClientUsesAuto(t *testing.T) {
 func TestClient_Do_HTTP3WithoutClient(t *testing.T) {
 	t.Parallel()
 
-	client := New(WithProtocol(ProtocolHTTP3))
+	client := mustNew(t, WithProtocol(ProtocolHTTP3))
 
 	req, err := hqgohttprequest.New(t.Context(), http.MethodGet, "https://example.com/", nil)
 
@@ -1824,7 +1813,7 @@ func TestClient_WithHTTP3ClientClonesForRedirectAndJar(t *testing.T) {
 
 	h3Client := &http.Client{}
 
-	client := New(
+	client := mustNew(t,
 		WithProtocol(ProtocolHTTP3),
 		WithHTTP3Client(h3Client),
 		WithCookieJar(jar),
@@ -1840,4 +1829,16 @@ func TestClient_WithHTTP3ClientClonesForRedirectAndJar(t *testing.T) {
 	require.ErrorIs(t, client.config.HTTPClient.CheckRedirect(&http.Request{}, nil), redirectErr)
 	assert.Nil(t, h3Client.Jar, "Expected the supplied HTTP/3 client not to be mutated")
 	assert.Nil(t, h3Client.CheckRedirect, "Expected the supplied HTTP/3 client not to be mutated")
+}
+
+// mustNew builds a client, failing the test when the options are invalid.
+func mustNew(tb testing.TB, ofs ...ClientOptionFunc) (client *Client) {
+	tb.Helper()
+
+	client, err := New(ofs...)
+	if err != nil {
+		tb.Fatalf("mustNew(t, ) error = %v", err)
+	}
+
+	return client
 }

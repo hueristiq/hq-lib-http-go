@@ -39,7 +39,7 @@ To install `hq-lib-http-go`, run the following command in your Go project:
 go get github.com/hueristiq/hq-lib-http-go@latest
 ```
 
-Requires Go 1.26.3 or later.
+Requires Go 1.26.0 or later.
 
 ## Usage
 
@@ -61,10 +61,13 @@ import (
 )
 
 func main() {
-	client := hqgohttp.New(
+	client, err := hqgohttp.New(
 		hqgohttp.WithTimeout(10*time.Second),
 		hqgohttp.WithRetryMaxAttempts(3),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer client.Close()
 
 	res, err := client.Get("https://example.com")
@@ -90,11 +93,14 @@ h3Client := &http.Client{Transport: &http3.Transport{
 	TLSClientConfig: &tls.Config{RootCAs: roots},
 }}
 
-client := hqgohttp.New(
+client, err := hqgohttp.New(
 	hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
 	hqgohttp.WithHTTP3Client(h3Client),
 	hqgohttp.WithHTTP3FallbackTTL(time.Minute),
 )
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 `Close` shuts the client down. It cancels in-flight executions with `ErrClientClosed`, closes idle connections, and makes later requests fail. `CloseIdleConnections` is the non-destructive alternative.
@@ -116,7 +122,10 @@ import (
 )
 
 func main() {
-	client := hqgohttp.New()
+	client, err := hqgohttp.New()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer client.Close()
 
 	res, err := client.Request().
@@ -165,7 +174,7 @@ if err := res.Body.JSON(&user); err != nil {
 The retry policy decides, after each attempt, whether the outcome is worth retrying. `WithRetryMaxAttempts` decides how many attempts to make, and the engine uses exponential backoff with jitter. `WithOnRetry` observes every retry, `WithPrepareRetry` re-signs before the next attempt, and `WithAttemptTimeout` bounds one attempt through the headers.
 
 ```go
-client := hqgohttp.New(
+client, err := hqgohttp.New(
 	hqgohttp.WithRetryMaxAttempts(4),
 	hqgohttp.WithOnRetry(func(event hqgohttp.RetryEvent) {
 		log.Printf("attempt %d failed after %s: %v; retrying in %s",
@@ -177,6 +186,9 @@ client := hqgohttp.New(
 		return nil
 	}),
 )
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 Retries are idempotent-only by default: GET, HEAD, OPTIONS, TRACE, PUT, DELETE, and QUERY are retried; POST and PATCH are not. Pass `WithRetryIdempotent(false)` to retry every method.
@@ -211,9 +223,12 @@ limiter := hqgolimiter.New(
 	hqgolimiter.WithBurst(2),
 )
 
-client := hqgohttp.New(
+client, err := hqgohttp.New(
 	hqgohttp.WithRateLimiter(limiter),
 )
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 The limiter waits once before every retry-engine attempt, not once per request. `RateLimiterFunc` adapts a plain function when the method set does not match the interface.
@@ -228,7 +243,7 @@ urlParser := hqgourlparser.New(
 	hqgourlparser.WithLenient(),
 )
 
-client := hqgohttp.New(
+client, err := hqgohttp.New(
 	hqgohttp.WithURLParser(hqgohttprequest.URLParserFunc(func(raw string) (*url.URL, error) {
 		parsed, err := urlParser.Parse(raw)
 		if err != nil {
@@ -238,6 +253,9 @@ client := hqgohttp.New(
 		return parsed.URL, nil
 	})),
 )
+if err != nil {
+	log.Fatal(err)
+}
 
 res, err := client.Get("example.com/users")
 ```
@@ -250,7 +268,10 @@ res, err := client.Get("example.com/users")
 
 ```go
 logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-client := hqgohttp.New(hqgohttp.WithLogger(logger))
+client, err := hqgohttp.New(hqgohttp.WithLogger(logger))
+if err != nil {
+	log.Fatal(err)
+}
 
 res, err := client.Get("https://api.example.com/users",
 	hqgohttp.WithRequestLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil))),
@@ -264,7 +285,11 @@ The client logs `http request` and `http response` at debug, approved retries at
 `Std()` returns an `*http.Client` whose transport runs the same execution path, and `RoundTrip` implements `http.RoundTripper` directly.
 
 ```go
-std := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(4)).Std()
+client, err := hqgohttp.New(hqgohttp.WithRetryMaxAttempts(4))
+if err != nil {
+	log.Fatal(err)
+}
+std := client.Std()
 
 res, err := std.Do(req)
 ```

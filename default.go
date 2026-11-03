@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"runtime"
@@ -13,10 +14,13 @@ import (
 )
 
 // defaultClient is the shared client behind the package-level shortcuts,
-// built lazily on first use. [New] has no failure mode, so the value is built
-// once and reused.
+// built lazily on first use. Default options always validate, so the panic
+// path is unreachable.
 var defaultClient = sync.OnceValue(func() (client *Client) {
-	client = New()
+	client, err := New()
+	if err != nil {
+		panic(fmt.Sprintf("http: default client: %v", err))
+	}
 
 	return client
 })

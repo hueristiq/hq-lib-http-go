@@ -50,7 +50,7 @@ func TestResponse_JSON(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -76,7 +76,7 @@ func TestResponse_XML(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -101,7 +101,7 @@ func TestResponse_BytesCache(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -141,7 +141,7 @@ func TestResponse_StatusClassification(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New()
+	client := mustNew(t)
 
 	tests := []struct {
 		code                int
@@ -195,7 +195,7 @@ func TestResponse_Non2xxIsNotAnError(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -215,7 +215,7 @@ func TestResponse_ReadError(t *testing.T) {
 		}, nil
 	})
 
-	res, err := hqgohttp.New(hqgohttp.WithTransport(transport)).Get("https://example.com")
+	res, err := mustNew(t, hqgohttp.WithTransport(transport)).Get("https://example.com")
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -237,7 +237,7 @@ func TestResponse_CloseIsIdempotent(t *testing.T) {
 		}, nil
 	})
 
-	res, err := hqgohttp.New(hqgohttp.WithTransport(transport)).Get("https://example.com")
+	res, err := mustNew(t, hqgohttp.WithTransport(transport)).Get("https://example.com")
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -256,7 +256,7 @@ func TestBody_StreamCached(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -286,7 +286,7 @@ func TestBody_Stream(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -315,7 +315,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("over the limit returns the prefix and an error", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxResponseBodySize(5)).Get(server.URL)
+		res, err := mustNew(t, hqgohttp.WithMaxResponseBodySize(5)).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -330,7 +330,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("exact limit succeeds", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxResponseBodySize(10)).Get(server.URL)
+		res, err := mustNew(t, hqgohttp.WithMaxResponseBodySize(10)).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -345,7 +345,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("JSON wraps the limit error", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxResponseBodySize(5)).Get(server.URL)
+		res, err := mustNew(t, hqgohttp.WithMaxResponseBodySize(5)).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -361,7 +361,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("request override removes the client cap", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxResponseBodySize(5)).
+		res, err := mustNew(t, hqgohttp.WithMaxResponseBodySize(5)).
 			Get(server.URL, hqgohttp.WithRequestMaxResponseBodySize(0))
 
 		require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("request override adds a cap", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().
+		res, err := mustNew(t).
 			Get(server.URL, hqgohttp.WithRequestMaxResponseBodySize(5))
 
 		require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestBody_MaxResponseBodySize(t *testing.T) {
 	t.Run("math.MaxInt64 is unlimited", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New(hqgohttp.WithMaxResponseBodySize(math.MaxInt64)).Get(server.URL)
+		res, err := mustNew(t, hqgohttp.WithMaxResponseBodySize(math.MaxInt64)).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -416,7 +416,7 @@ func TestBody_UTF8(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -438,7 +438,7 @@ func TestBody_UTF8Empty(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 
@@ -456,7 +456,7 @@ func TestBody_UTF8Empty(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 
@@ -474,7 +474,7 @@ func TestBody_UTF8Empty(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Head(server.URL)
+		res, err := mustNew(t).Head(server.URL)
 
 		require.NoError(t, err)
 
@@ -496,7 +496,7 @@ func TestBody_ReadAfterClose(t *testing.T) {
 	t.Run("Read", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NoError(t, res.Body.Close())
@@ -510,7 +510,7 @@ func TestBody_ReadAfterClose(t *testing.T) {
 	t.Run("Bytes", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NoError(t, res.Body.Close())
@@ -524,7 +524,7 @@ func TestBody_ReadAfterClose(t *testing.T) {
 	t.Run("String", func(t *testing.T) {
 		t.Parallel()
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NoError(t, res.Body.Close())
@@ -547,7 +547,7 @@ func TestBody_XMLCharset(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 
@@ -584,7 +584,7 @@ func TestBody_SSE(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -618,7 +618,7 @@ func TestBody_SSE(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -644,7 +644,7 @@ func TestBody_SSE(t *testing.T) {
 
 		t.Cleanup(server.Close)
 
-		res, err := hqgohttp.New().Get(server.URL)
+		res, err := mustNew(t).Get(server.URL)
 
 		require.NoError(t, err)
 		require.NotNil(t, res)
@@ -664,7 +664,7 @@ func TestBody_Read(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -685,7 +685,7 @@ func TestResponse_Std(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	res, err := hqgohttp.New().Get(server.URL)
+	res, err := mustNew(t).Get(server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, res)

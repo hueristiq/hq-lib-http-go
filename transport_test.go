@@ -51,7 +51,7 @@ func TestClient_WithTransport(t *testing.T) {
 		return
 	})
 
-	client := hqgohttp.New(hqgohttp.WithTransport(transport))
+	client := mustNew(t, hqgohttp.WithTransport(transport))
 
 	res, err := client.Get("http://example.com/")
 
@@ -79,7 +79,7 @@ func TestClient_WithTransportWrapper(t *testing.T) {
 		})
 	}
 
-	client := hqgohttp.New(hqgohttp.WithTransportWrapper(wrapper))
+	client := mustNew(t, hqgohttp.WithTransportWrapper(wrapper))
 
 	res, err := client.Get(server.URL)
 
@@ -104,7 +104,7 @@ func TestClient_WithTransportWrapperPreservesHTTP2(t *testing.T) {
 		return base
 	}
 
-	client := hqgohttp.New(hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
+	client := mustNew(t, hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
 		hqgohttp.WithTransportWrapper(wrapper),
 	)
@@ -131,7 +131,7 @@ func TestClient_WithCheckRedirect(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithCheckRedirect(func(_ *http.Request, _ []*http.Request) error {
+	client := mustNew(t, hqgohttp.WithCheckRedirect(func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}),
 	)
@@ -177,7 +177,7 @@ func TestClient_WithCookieJar(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	client := hqgohttp.New(hqgohttp.WithCookieJar(jar),
+	client := mustNew(t, hqgohttp.WithCookieJar(jar),
 		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
 	)
 
