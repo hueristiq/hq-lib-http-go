@@ -3,16 +3,14 @@ package http
 import (
 	"net/http"
 	"time"
+
+	hqgologger "github.com/hueristiq/hq-lib-logger-go"
 )
 
-// Logger is the minimal logging surface used by the client. It is satisfied by
-// [log/slog.Logger]. A nil Logger disables logging.
-type Logger interface {
-	Debug(msg string, args ...any)
-	Info(msg string, args ...any)
-	Warn(msg string, args ...any)
-	Error(msg string, args ...any)
-}
+// Logger is the minimal logging surface used by the client. It is the shared
+// logger-go interface, satisfied by [log/slog.Logger]. A nil Logger disables
+// logging.
+type Logger = hqgologger.SlogLogger
 
 // WithLogger returns a [ClientOptionFunc] that sets the client's logger. Nil
 // disables logging.
