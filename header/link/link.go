@@ -29,7 +29,7 @@ type WebLink struct {
 }
 
 // String returns a string representation of the WebLink in the format
-// specified by RFC 8288:
+// specified by [RFC 8288](https://www.rfc-editor.org/info/rfc8288/):
 //
 //	<URL>; key1="value1"; key2="value2"; rel="relation"
 //
@@ -450,7 +450,7 @@ func sanitizeLinkToken(value string) (sanitized string) {
 	return sanitized
 }
 
-// quoteLinkValue serializes value as an RFC 7230 quoted-string, escaping the
+// quoteLinkValue serializes value as an [RFC 7230](https://www.rfc-editor.org/info/rfc7230/) quoted-string, escaping the
 // quote and backslash characters and replacing CR and LF with spaces.
 //
 // Parameters:
@@ -482,7 +482,7 @@ func quoteLinkValue(value string) (quoted string) {
 	return quoted
 }
 
-// unquoteLinkValue resolves an RFC 8288 quoted-string. It reports false when
+// unquoteLinkValue resolves an [RFC 8288](https://www.rfc-editor.org/info/rfc8288/) quoted-string. It reports false when
 // value is not a complete quoted string, in which case the caller keeps the
 // value verbatim.
 //

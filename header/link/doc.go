@@ -1,4 +1,4 @@
-// Package link parses HTTP Link headers as defined by RFC 8288.
+// Package link parses HTTP Link headers as defined by [RFC 8288](https://www.rfc-editor.org/info/rfc8288/).
 //
 // A Link header carries one or more comma-separated entries, each holding a
 // target URL plus parameters such as the relation type:

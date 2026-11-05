@@ -4,7 +4,7 @@ import "strings"
 
 // CanonicalizeHeaderKey converts an HTTP header key to its canonical form.
 //
-// The canonical form of an HTTP header key, as recommended by RFC 7231 and RFC 9110,
+// The canonical form of an HTTP header key, as recommended by [RFC 7231](https://www.rfc-editor.org/info/rfc7231/) and [RFC 9110](https://www.rfc-editor.org/info/rfc9110/),
 // capitalizes the first letter of each word in a hyphen-separated header name and lowercases
 // the rest (e.g., "content-type" becomes "Content-Type"). This function processes the input
 // string character by character, ensuring that:

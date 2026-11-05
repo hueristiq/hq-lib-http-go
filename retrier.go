@@ -55,7 +55,7 @@ func isMarkedRetryable(err error) (retry bool) {
 
 // isIdempotentMethod reports whether method is idempotent. The client uses it
 // when [WithRetryIdempotent] is enabled. GET, HEAD, OPTIONS, TRACE, PUT, and
-// DELETE are idempotent per RFC 9110; QUERY is safe and idempotent per RFC
+// DELETE are idempotent per [RFC 9110](https://www.rfc-editor.org/info/rfc9110/); QUERY is safe and idempotent per RFC
 // 10008.
 //
 // Parameters:
@@ -614,9 +614,9 @@ func (e *retryableError) Unwrap() (err error) {
 	return err
 }
 
-// retryAfterWait parses the Retry-After header of resp, following RFC 9110:
+// retryAfterWait parses the Retry-After header of resp, following [RFC 9110](https://www.rfc-editor.org/info/rfc9110/):
 // either a number of seconds or an HTTP-date. Surrounding whitespace is
-// ignored, and the obsolete RFC 850 and asctime date forms are accepted. A
+// ignored, and the obsolete [RFC 850](https://www.rfc-editor.org/info/rfc850/) and asctime date forms are accepted. A
 // seconds value too large for a time.Duration is clamped, and a value of zero
 // or a date in the past is honored as an immediate retry.
 //
@@ -656,9 +656,9 @@ func retryAfterWait(resp *http.Response) (wait time.Duration, ok bool) {
 		return wait, ok
 	}
 
-	// http.ParseTime accepts IMF-fixdate plus the obsolete RFC 850 and
-	// asctime forms that RFC 9110 permits recipients to understand. Fall back
-	// to the broader RFC 1123 parser for zones such as UTC that
+	// http.ParseTime accepts IMF-fixdate plus the obsolete [RFC 850](https://www.rfc-editor.org/info/rfc850/) and
+	// asctime forms that [RFC 9110](https://www.rfc-editor.org/info/rfc9110/) permits recipients to understand. Fall back
+	// to the broader [RFC 1123](https://www.rfc-editor.org/info/rfc1123/) parser for zones such as UTC that
 	// http.ParseTime rejects even though servers emit them.
 	retryTime, err := http.ParseTime(header)
 	if err != nil {

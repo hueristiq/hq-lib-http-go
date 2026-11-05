@@ -13,7 +13,7 @@
 // connection management.
 //
 // [CanonicalizeHeaderKey] converts a header key to its canonical form (for
-// example, "content-type" to "Content-Type"), as recommended by RFC 9110.
+// example, "content-type" to "Content-Type"), as recommended by [RFC 9110](https://www.rfc-editor.org/info/rfc9110/).
 //
 // Link header parsing lives in the subpackage
 // [github.com/hueristiq/hq-lib-http-go/header/link].
