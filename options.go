@@ -14,7 +14,7 @@ import (
 	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 )
 
-// clientOptions holds the configurable knobs of a [Client], populated through
+// ClientOptions holds the configurable knobs of a [Client], populated through
 // [ClientOptionFunc] values passed to [New]. The resolved configuration stays
 // private to the client and immutable after construction.
 //
@@ -106,7 +106,7 @@ import (
 //   - TLSHandshakeTimeout (time.Duration): the TLS handshake timeout applied to
 //     library-built *http.Transport values when the corresponding unexported
 //     flag is set.
-type clientOptions struct {
+type ClientOptions struct {
 	HTTPClient                 *http.Client
 	HTTP3Client                *http.Client
 	Protocol                   Protocol
@@ -152,7 +152,7 @@ type clientOptions struct {
 //
 // Returns:
 //   - err (error): non-nil when a value is invalid.
-func (opts *clientOptions) validate() (err error) {
+func (opts *ClientOptions) validate() (err error) {
 	if opts.Protocol < ProtocolAuto || opts.Protocol > ProtocolHTTP3 {
 		return fmt.Errorf("client.New: protocol %d is out of range", opts.Protocol)
 	}
@@ -201,8 +201,8 @@ func (opts *clientOptions) validate() (err error) {
 // When the same option is supplied more than once, the last one wins.
 //
 // Parameters:
-//   - opts (*clientOptions): the options bag to mutate.
-type ClientOptionFunc func(opts *clientOptions)
+//   - opts (*ClientOptions): the options bag to mutate.
+type ClientOptionFunc func(opts *ClientOptions)
 
 // New creates a [Client] configured by the given options.
 //
@@ -254,7 +254,7 @@ type ClientOptionFunc func(opts *clientOptions)
 //   - client (*Client): a new client, ready to execute requests.
 //   - err (error): non-nil when an option value is invalid.
 func New(ofs ...ClientOptionFunc) (client *Client, err error) {
-	opts := &clientOptions{
+	opts := &ClientOptions{
 		Headers:             []HeaderField{{Key: hqgohttpheader.UserAgent.String(), Value: DefaultUserAgent}},
 		Timeout:             DefaultTimeout,
 		ResponseBodyTimeout: DefaultResponseBodyTimeout,
@@ -312,7 +312,7 @@ func New(ofs ...ClientOptionFunc) (client *Client, err error) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the httpClient field.
 func WithHTTPClient(client *http.Client) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if client != nil {
 			opts.HTTPClient = client
 		}
@@ -340,7 +340,7 @@ func WithHTTPClient(client *http.Client) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the http3Client field.
 func WithHTTP3Client(client *http.Client) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if client != nil {
 			opts.HTTP3Client = client
 		}
@@ -366,7 +366,7 @@ func WithHTTP3Client(client *http.Client) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that registers the header.
 func WithHeader(key, value string) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if key == "" {
 			return
 		}
@@ -402,7 +402,7 @@ func WithHeader(key, value string) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the timeout field.
 func WithTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.Timeout = timeout
 	}
 }
@@ -424,7 +424,7 @@ func WithTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the defaultCtx field.
 func WithContext(ctx context.Context) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.DefaultContext = ctx
 	}
 }
@@ -447,7 +447,7 @@ func WithContext(ctx context.Context) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     responseBodyTimeout field.
 func WithResponseBodyTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.ResponseBodyTimeout = timeout
 	}
 }
@@ -471,7 +471,7 @@ func WithResponseBodyTimeout(timeout time.Duration) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxResponseBodySize field.
 func WithMaxResponseBodySize(maxResponseBodySize int64) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.MaxResponseBodySize = maxResponseBodySize
 	}
 }
@@ -496,7 +496,7 @@ func WithMaxResponseBodySize(maxResponseBodySize int64) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxRequestBodySize field.
 func WithMaxRequestBodySize(maxRequestBodySize int64) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.MaxRequestBodySize = maxRequestBodySize
 	}
 }
@@ -522,7 +522,7 @@ func WithMaxRequestBodySize(maxRequestBodySize int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the attemptTimeout field.
 func WithAttemptTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if timeout > 0 {
 			opts.AttemptTimeout = timeout
 		} else {
@@ -546,7 +546,7 @@ func WithAttemptTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retryPolicy field.
 func WithRetryPolicy(retryPolicy RetryPolicy) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.RetryPolicy = retryPolicy
 	}
 }
@@ -569,7 +569,7 @@ func WithRetryPolicy(retryPolicy RetryPolicy) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the idempotentRetries field.
 func WithRetryIdempotent(enabled bool) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.IdempotentRetries = enabled
 	}
 }
@@ -590,7 +590,7 @@ func WithRetryIdempotent(enabled bool) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the rateLimiter field.
 func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.RateLimiter = rateLimiter
 	}
 }
@@ -610,7 +610,7 @@ func WithRateLimiter(rateLimiter RateLimiter) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retry attempt count.
 func WithRetryMaxAttempts(maxAttempts int) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.RetryMaxAttempts = maxAttempts
 	}
 }
@@ -632,7 +632,7 @@ func WithRetryMaxAttempts(maxAttempts int) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the urlParser field.
 func WithURLParser(parser hqgohttprequest.URLParser) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if parser != nil {
 			opts.URLParser = parser
 		}
@@ -656,7 +656,7 @@ func WithURLParser(parser hqgohttprequest.URLParser) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onRequest field.
 func WithOnRequest(onRequest OnRequestFunc) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.OnRequest = onRequest
 	}
 }
@@ -682,7 +682,7 @@ func WithOnRequest(onRequest OnRequestFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onResponse field.
 func WithOnResponse(onResponse OnResponseFunc) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.OnResponse = onResponse
 	}
 }
@@ -702,7 +702,7 @@ func WithOnResponse(onResponse OnResponseFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the onRetry field.
 func WithOnRetry(onRetry OnRetryFunc) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.OnRetry = onRetry
 	}
 }
@@ -723,7 +723,7 @@ func WithOnRetry(onRetry OnRetryFunc) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the prepareRetry field.
 func WithPrepareRetry(prepareRetry PrepareRetryFunc) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if prepareRetry != nil {
 			opts.PrepareRetry = prepareRetry
 		}
@@ -751,7 +751,7 @@ func WithPrepareRetry(prepareRetry PrepareRetryFunc) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     retryExhaustionHandler field.
 func WithOnRetryExhaustion(handler RetryExhaustionHandler) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.RetryExhaustionHandler = handler
 	}
 }
@@ -771,7 +771,7 @@ func WithOnRetryExhaustion(handler RetryExhaustionHandler) (f ClientOptionFunc) 
 //   - f (ClientOptionFunc): a functional option that sets the
 //     maxRequestsBeforeIdleClose field.
 func WithMaxRequestsBeforeIdleClose(n int) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.MaxRequestsBeforeIdleClose = n
 	}
 }
@@ -791,7 +791,7 @@ func WithMaxRequestsBeforeIdleClose(n int) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the responseReadLimit field.
 func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.ResponseReadLimit = responseReadLimit
 	}
 }
@@ -814,7 +814,7 @@ func WithResponseReadLimit(responseReadLimit int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the retryErrorBodyLimit field.
 func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.RetryErrorBodyLimit = retryErrorBodyLimit
 	}
 }
@@ -835,7 +835,7 @@ func WithRetryErrorBodyLimit(retryErrorBodyLimit int64) (f ClientOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the urlParser field.
 func WithRequestURLParser(parser hqgohttprequest.URLParser) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if parser != nil {
 			opts.URLParser = parser
 		}
@@ -852,7 +852,7 @@ func WithRequestURLParser(parser hqgohttprequest.URLParser) (f RequestOptionFunc
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the retryPolicy field.
 func WithRequestRetryPolicy(retryPolicy RetryPolicy) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if retryPolicy != nil {
 			opts.RetryPolicy = retryPolicy
 		}
@@ -870,7 +870,7 @@ func WithRequestRetryPolicy(retryPolicy RetryPolicy) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the idempotentRetries field.
 func WithRequestRetryIdempotent(enabled bool) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		opts.IdempotentRetries = enabled
 	}
 }
@@ -887,7 +887,7 @@ func WithRequestRetryIdempotent(enabled bool) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the rateLimiter field.
 func WithRequestRateLimiter(rateLimiter RateLimiter) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if rateLimiter != nil {
 			opts.RateLimiter = rateLimiter
 		}
@@ -904,7 +904,7 @@ func WithRequestRateLimiter(rateLimiter RateLimiter) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onRequest field.
 func WithRequestOnRequest(onRequest OnRequestFunc) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if onRequest != nil {
 			opts.OnRequest = onRequest
 		}
@@ -921,7 +921,7 @@ func WithRequestOnRequest(onRequest OnRequestFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onResponse field.
 func WithRequestOnResponse(onResponse OnResponseFunc) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if onResponse != nil {
 			opts.OnResponse = onResponse
 		}
@@ -938,7 +938,7 @@ func WithRequestOnResponse(onResponse OnResponseFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the onRetry field.
 func WithRequestOnRetry(onRetry OnRetryFunc) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if onRetry != nil {
 			opts.OnRetry = onRetry
 		}
@@ -955,7 +955,7 @@ func WithRequestOnRetry(onRetry OnRetryFunc) (f RequestOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the prepareRetry field.
 func WithRequestPrepareRetry(prepareRetry PrepareRetryFunc) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if prepareRetry != nil {
 			opts.PrepareRetry = prepareRetry
 		}
@@ -973,7 +973,7 @@ func WithRequestPrepareRetry(prepareRetry PrepareRetryFunc) (f RequestOptionFunc
 //   - f (RequestOptionFunc): a functional option that sets the
 //     retryExhaustionHandler field.
 func WithRequestOnRetryExhaustion(handler RetryExhaustionHandler) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if handler != nil {
 			opts.RetryExhaustionHandler = handler
 		}
@@ -994,7 +994,7 @@ func WithRequestOnRetryExhaustion(handler RetryExhaustionHandler) (f RequestOpti
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the attemptTimeout field.
 func WithRequestAttemptTimeout(timeout time.Duration) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if timeout > 0 {
 			opts.AttemptTimeout = timeout
 		} else {
@@ -1015,7 +1015,7 @@ func WithRequestAttemptTimeout(timeout time.Duration) (f RequestOptionFunc) {
 //   - f (RequestOptionFunc): a functional option that sets the
 //     maxResponseBodySize field.
 func WithRequestMaxResponseBodySize(maxResponseBodySize int64) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if maxResponseBodySize >= 0 {
 			opts.MaxResponseBodySize = maxResponseBodySize
 		}
@@ -1033,7 +1033,7 @@ func WithRequestMaxResponseBodySize(maxResponseBodySize int64) (f RequestOptionF
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the responseReadLimit field.
 func WithRequestResponseReadLimit(responseReadLimit int64) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if responseReadLimit > 0 {
 			opts.ResponseReadLimit = responseReadLimit
 		}
@@ -1052,7 +1052,7 @@ func WithRequestResponseReadLimit(responseReadLimit int64) (f RequestOptionFunc)
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the retryErrorBodyLimit field.
 func WithRequestRetryErrorBodyLimit(retryErrorBodyLimit int64) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		if retryErrorBodyLimit >= 0 {
 			opts.RetryErrorBodyLimit = retryErrorBodyLimit
 		}
@@ -1079,7 +1079,7 @@ func WithRequestRetryErrorBodyLimit(retryErrorBodyLimit int64) (f RequestOptionF
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the protocol field.
 func WithProtocol(protocol Protocol) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.Protocol = protocol
 	}
 }
@@ -1101,7 +1101,7 @@ func WithProtocol(protocol Protocol) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     http3FallbackTTL field.
 func WithHTTP3FallbackTTL(ttl time.Duration) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.HTTP3FallbackTTL = ttl
 	}
 }

@@ -1,7 +1,7 @@
-github.com/hueristiq/hq-lib-logger-go v0.0.0-20261105111007-988bb896cf88 h1:IF5nmds83w4t7Cy/w0ypl2h4e5egaf5y8pUiaPjnyg0=
-github.com/hueristiq/hq-lib-logger-go v0.0.0-20261105111007-988bb896cf88/go.mod h1:bTUesPCe/rdrAhiIcag7E2FXNRSaZ3c49RM4Scie2GU=
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261103132001-7f2842087ae2 h1:4mkH/pi6ZKuxSzcR2zxVpLkUwu5AnyexxG9o8x4K+Us=
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261103132001-7f2842087ae2/go.mod h1:BxrfD64EFIBLJsrfJE8g1tuRV+/mV937D/22f9ipkUw=
+github.com/hueristiq/hq-lib-logger-go v0.0.0-20261106110838-c82d50e6058a h1:mh1N5nGx16gCa3XRISdH69GIVEMdwX5hOY/3PelbL5Q=
+github.com/hueristiq/hq-lib-logger-go v0.0.0-20261106110838-c82d50e6058a/go.mod h1:bTUesPCe/rdrAhiIcag7E2FXNRSaZ3c49RM4Scie2GU=
+github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261106110844-07878c824fcb h1:i6V6a+jRaxJsBRT1Vlbcaqm/fqdP0BIvgoXt1OG0B3c=
+github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261106110844-07878c824fcb/go.mod h1:BxrfD64EFIBLJsrfJE8g1tuRV+/mV937D/22f9ipkUw=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 go.yaml.in/yaml/v3 v3.0.6 h1:zcDfvjXEqTQmpjniUBLc91xYJMB2c4QOFxEF/LCEckM=

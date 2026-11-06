@@ -18,19 +18,19 @@ import (
 // [WithTimeout] is not supplied.
 const DefaultTimeout = 30 * time.Second
 
-// options holds the configurable knobs of a [Do] exchange, populated through
+// Options holds the configurable knobs of a [Do] exchange, populated through
 // [OptionFunc] values.
 //
 // Fields:
-//   - useTLS (bool): whether the connection is wrapped in TLS.
-//   - tlsConfig (*tls.Config): the TLS configuration; nil means a secure
+//   - UseTLS (bool): whether the connection is wrapped in TLS.
+//   - TLSConfig (*tls.Config): the TLS configuration; nil means a secure
 //     default derived from the address.
-//   - timeout (time.Duration): the exchange bound when the context carries
+//   - Timeout (time.Duration): the exchange bound when the context carries
 //     no earlier deadline. Non-positive means [DefaultTimeout].
-type options struct {
-	useTLS    bool
-	tlsConfig *tls.Config
-	timeout   time.Duration
+type Options struct {
+	UseTLS    bool
+	TLSConfig *tls.Config
+	Timeout   time.Duration
 }
 
 // OptionFunc configures a [Do] exchange through the functional-options idiom.
@@ -38,8 +38,8 @@ type options struct {
 // When the same option is supplied more than once, the last one wins.
 //
 // Parameters:
-//   - opts (*options): the options bag to mutate.
-type OptionFunc func(opts *options)
+//   - opts (*Options): the options bag to mutate.
+type OptionFunc func(opts *Options)
 
 // WithTLS returns an [OptionFunc] that selects whether the connection is
 // wrapped in TLS. When a [WithTLSConfig] option is supplied, TLS is implied.
@@ -48,10 +48,10 @@ type OptionFunc func(opts *options)
 //   - enabled (bool): true to dial TLS, false for cleartext TCP.
 //
 // Returns:
-//   - f (OptionFunc): a functional option that sets the useTLS field.
+//   - f (OptionFunc): a functional option that sets the UseTLS field.
 func WithTLS(enabled bool) (f OptionFunc) {
-	return func(opts *options) {
-		opts.useTLS = enabled
+	return func(opts *Options) {
+		opts.UseTLS = enabled
 	}
 }
 
@@ -65,11 +65,11 @@ func WithTLS(enabled bool) (f OptionFunc) {
 //     default with TLS 1.2 as the minimum version.
 //
 // Returns:
-//   - f (OptionFunc): a functional option that sets the tlsConfig field.
+//   - f (OptionFunc): a functional option that sets the TLSConfig field.
 func WithTLSConfig(config *tls.Config) (f OptionFunc) {
-	return func(opts *options) {
-		opts.tlsConfig = config
-		opts.useTLS = true
+	return func(opts *Options) {
+		opts.TLSConfig = config
+		opts.UseTLS = true
 	}
 }
 
@@ -82,10 +82,10 @@ func WithTLSConfig(config *tls.Config) (f OptionFunc) {
 //     to 0 fall back to [DefaultTimeout].
 //
 // Returns:
-//   - f (OptionFunc): a functional option that sets the timeout field.
+//   - f (OptionFunc): a functional option that sets the Timeout field.
 func WithTimeout(timeout time.Duration) (f OptionFunc) {
-	return func(opts *options) {
-		opts.timeout = timeout
+	return func(opts *Options) {
+		opts.Timeout = timeout
 	}
 }
 
@@ -144,7 +144,7 @@ func (b *responseBody) Close() (err error) {
 // exchange gets one connection.
 //
 // The exchange is bounded by the earlier of the context's deadline and the
-// configured timeout; the bound covers the dial, the TLS handshake, writing,
+// configured Timeout; the bound covers the dial, the TLS handshake, writing,
 // and reading the response body, so consume it before the deadline passes.
 // Closing the response body closes the connection.
 //
@@ -152,7 +152,7 @@ func (b *responseBody) Close() (err error) {
 //   - ctx (context.Context): the context governing the exchange.
 //   - address (string): the host:port pair to connect to.
 //   - request ([]byte): the raw HTTP/1.x request bytes.
-//   - ofs (...OptionFunc): functional options configuring the exchange.
+//   - ofs (...OptionFunc): functional Options configuring the exchange.
 //
 // Returns:
 //   - res (*http.Response): the parsed response; the caller owns and must
@@ -171,19 +171,19 @@ func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) 
 		return
 	}
 
-	opts := &options{
-		timeout: DefaultTimeout,
+	opts := &Options{
+		Timeout: DefaultTimeout,
 	}
 
 	for _, of := range ofs {
 		of(opts)
 	}
 
-	if opts.timeout <= 0 {
-		opts.timeout = DefaultTimeout
+	if opts.Timeout <= 0 {
+		opts.Timeout = DefaultTimeout
 	}
 
-	deadline := time.Now().Add(opts.timeout)
+	deadline := time.Now().Add(opts.Timeout)
 
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -235,12 +235,12 @@ func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) 
 // Parameters:
 //   - ctx (context.Context): bounds the dial and the handshake.
 //   - address (string): the host:port pair to connect to.
-//   - opts (*options): the exchange configuration.
+//   - opts (*Options): the exchange configuration.
 //
 // Returns:
 //   - conn (net.Conn): the connected, possibly TLS-wrapped connection.
 //   - err (error): non-nil when dialing or the handshake fails.
-func dial(ctx context.Context, address string, opts *options) (conn net.Conn, err error) {
+func dial(ctx context.Context, address string, opts *Options) (conn net.Conn, err error) {
 	dialer := &net.Dialer{}
 
 	conn, err = dialer.DialContext(ctx, "tcp", address)
@@ -248,27 +248,27 @@ func dial(ctx context.Context, address string, opts *options) (conn net.Conn, er
 		return
 	}
 
-	if !opts.useTLS {
+	if !opts.UseTLS {
 		return
 	}
 
-	tlsConfig := opts.tlsConfig
+	config := opts.TLSConfig
 
-	if tlsConfig == nil {
-		tlsConfig = &tls.Config{
+	if config == nil {
+		config = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
 	} else {
-		tlsConfig = tlsConfig.Clone()
+		config = config.Clone()
 	}
 
-	if tlsConfig.ServerName == "" {
+	if config.ServerName == "" {
 		if host, _, serr := net.SplitHostPort(address); serr == nil {
-			tlsConfig.ServerName = host
+			config.ServerName = host
 		}
 	}
 
-	tlsConn := tls.Client(conn, tlsConfig)
+	tlsConn := tls.Client(conn, config)
 
 	if err = tlsConn.HandshakeContext(ctx); err != nil {
 		_ = conn.Close()

@@ -25,7 +25,7 @@ func TestRequestOptionFuncs(t *testing.T) {
 
 	baseLimiter := testRateLimiter{}
 
-	opts := &requestOptions{
+	opts := &RequestOptions{
 		RetryPolicy:       basePolicy,
 		RateLimiter:       baseLimiter,
 		ResponseReadLimit: 9,

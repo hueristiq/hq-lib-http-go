@@ -366,7 +366,7 @@ func TestWithTLSConfig_Clones(t *testing.T) {
 func TestClientOptions_WithHeader(t *testing.T) {
 	t.Parallel()
 
-	opts := &clientOptions{}
+	opts := &ClientOptions{}
 
 	WithHeader("", "ignored")(opts)
 
@@ -402,7 +402,7 @@ func TestClient_ExecutionTimeoutDefaultsToThirtySeconds(t *testing.T) {
 func TestWithAttemptTimeout(t *testing.T) {
 	t.Parallel()
 
-	opts := &clientOptions{AttemptTimeout: time.Second}
+	opts := &ClientOptions{AttemptTimeout: time.Second}
 
 	WithAttemptTimeout(0)(opts)
 
@@ -437,7 +437,7 @@ func TestSameRoundTripper(t *testing.T) {
 func TestClientOptions_ValidateRejectsNegative(t *testing.T) {
 	t.Parallel()
 
-	opts := &clientOptions{ResponseBodyTimeout: -time.Second}
+	opts := &ClientOptions{ResponseBodyTimeout: -time.Second}
 
 	assert.Error(t, opts.validate())
 }
@@ -445,14 +445,14 @@ func TestClientOptions_ValidateRejectsNegative(t *testing.T) {
 func TestRequestOptions_Normalize(t *testing.T) {
 	t.Parallel()
 
-	opts := &requestOptions{ResponseReadLimit: 0}
+	opts := &RequestOptions{ResponseReadLimit: 0}
 
 	opts.normalize()
 
 	assert.NotNil(t, opts.RetryPolicy)
 	assert.Equal(t, int64(DefaultResponseReadLimit), opts.ResponseReadLimit)
 
-	opts = &requestOptions{ResponseReadLimit: 128}
+	opts = &RequestOptions{ResponseReadLimit: 128}
 
 	opts.normalize()
 

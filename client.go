@@ -38,7 +38,7 @@ import (
 // value is not usable.
 //
 // Fields:
-//   - config (clientOptions): the resolved configuration. It is private and
+//   - config (ClientOptions): the resolved configuration. It is private and
 //     immutable after [New]; use [Client.Config] to inspect it.
 //   - fallbackHTTPClient (*http.Client): the fallback client, nil when the
 //     selected protocol has no fallback.
@@ -62,7 +62,7 @@ import (
 //   - closeCancel (context.CancelCauseFunc): cancels closeCtx with
 //     [ErrClientClosed].
 type Client struct {
-	config clientOptions
+	config ClientOptions
 
 	fallbackHTTPClient *http.Client
 	fallbackOnHTTP3    bool
@@ -103,12 +103,12 @@ func (c *Client) Do(req *hqgohttprequest.Request, ofs ...RequestOptionFunc) (res
 //
 // Parameters:
 //   - req (*hqgohttprequest.Request): the request to execute.
-//   - opts (*requestOptions): the resolved per-request configuration.
+//   - opts (*RequestOptions): the resolved per-request configuration.
 //
 // Returns:
 //   - res (*Response): the wrapped response, or nil on failure.
 //   - err (error): non-nil when the execution fails.
-func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *requestOptions) (res *Response, err error) {
+func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *RequestOptions) (res *Response, err error) {
 	raw, doErr := c.do(req, opts) //nolint:bodyclose // The response body is handed to the caller.
 	if raw == nil {
 		return nil, doErr
@@ -122,12 +122,12 @@ func (c *Client) doWrapped(req *hqgohttprequest.Request, opts *requestOptions) (
 //
 // Parameters:
 //   - req (*hqgohttprequest.Request): the request to execute.
-//   - opts (*requestOptions): the resolved per-request configuration.
+//   - opts (*RequestOptions): the resolved per-request configuration.
 //
 // Returns:
 //   - res (*http.Response): the raw response, or nil on failure.
 //   - err (error): non-nil when the execution fails.
-func (c *Client) do(req *hqgohttprequest.Request, opts *requestOptions) (res *http.Response, err error) {
+func (c *Client) do(req *hqgohttprequest.Request, opts *RequestOptions) (res *http.Response, err error) {
 	// attempt counts the retry-engine attempts. A reusable body is reset on
 	// the first attempt so a request reused after a partial send starts from
 	// the beginning; later attempts reuse the body prepared after the previous
@@ -932,7 +932,7 @@ func NewMultipartForm() (form *MultipartForm) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the transport field.
 func WithTransport(transport http.RoundTripper) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if transport != nil {
 			opts.Transport = transport
 		}
@@ -959,7 +959,7 @@ func WithTransport(transport http.RoundTripper) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     transportWrapper field.
 func WithTransportWrapper(wrapper func(http.RoundTripper) http.RoundTripper) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if wrapper != nil {
 			opts.TransportWrapper = wrapper
 		}
@@ -990,7 +990,7 @@ type TransportBuilder func(protocol Protocol, transport *http.Transport) *http.T
 //   - f (ClientOptionFunc): a functional option that sets the
 //     transportBuilder field.
 func WithTransportBuilder(builder TransportBuilder) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if builder != nil {
 			opts.TransportBuilder = builder
 		}
@@ -1011,7 +1011,7 @@ func WithTransportBuilder(builder TransportBuilder) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the dialContext field.
 func WithDialContext(dialContext func(ctx context.Context, network, address string) (net.Conn, error)) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if dialContext != nil {
 			opts.DialContext = dialContext
 		}
@@ -1027,7 +1027,7 @@ func WithDialContext(dialContext func(ctx context.Context, network, address stri
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the dialContext field.
 func WithDialer(dialer *net.Dialer) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if dialer != nil {
 			opts.DialContext = dialer.DialContext
 		}
@@ -1048,7 +1048,7 @@ func WithDialer(dialer *net.Dialer) (f ClientOptionFunc) {
 //   - f (ClientOptionFunc): a functional option that sets the
 //     tlsHandshakeTimeout field.
 func WithTLSHandshakeTimeout(timeout time.Duration) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if timeout < 0 {
 			timeout = 0
 		}
@@ -1078,7 +1078,7 @@ func WithTLSHandshakeTimeout(timeout time.Duration) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the proxy field.
 func WithProxy(proxy func(*http.Request) (*url.URL, error)) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		if proxy != nil {
 			opts.Proxy = proxy
 		}
@@ -1102,7 +1102,7 @@ func WithProxy(proxy func(*http.Request) (*url.URL, error)) (f ClientOptionFunc)
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the checkRedirect field.
 func WithCheckRedirect(checkRedirect func(*http.Request, []*http.Request) error) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.CheckRedirect = checkRedirect
 		opts.checkRedirectSet = true
 	}
@@ -1120,7 +1120,7 @@ func WithCheckRedirect(checkRedirect func(*http.Request, []*http.Request) error)
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the cookieJar field.
 func WithCookieJar(cookieJar http.CookieJar) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.CookieJar = cookieJar
 		opts.cookieJarSet = true
 	}
@@ -1143,7 +1143,7 @@ func WithCookieJar(cookieJar http.CookieJar) (f ClientOptionFunc) {
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the tlsConfig field.
 func WithTLSConfig(config *tls.Config) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.TLSConfig = config
 	}
 }

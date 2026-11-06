@@ -21,7 +21,7 @@ type Logger = hqgologger.SlogLogger
 // Returns:
 //   - f (ClientOptionFunc): a functional option that sets the logger.
 func WithLogger(logger Logger) (f ClientOptionFunc) {
-	return func(opts *clientOptions) {
+	return func(opts *ClientOptions) {
 		opts.Logger = logger
 	}
 }
@@ -35,7 +35,7 @@ func WithLogger(logger Logger) (f ClientOptionFunc) {
 // Returns:
 //   - f (RequestOptionFunc): a functional option that sets the logger.
 func WithRequestLogger(logger Logger) (f RequestOptionFunc) {
-	return func(opts *requestOptions) {
+	return func(opts *RequestOptions) {
 		opts.Logger = logger
 	}
 }
