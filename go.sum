@@ -1,5 +1,5 @@
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107133835-9279eb9ddd6e h1:00xLysCCn3YI+3IIs85ILIbW+q5UZgp7f3OfT3lCZCY=
-github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107133835-9279eb9ddd6e/go.mod h1:BxrfD64EFIBLJsrfJE8g1tuRV+/mV937D/22f9ipkUw=
+github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107182923-3eaab56177c1 h1:Kv+XdTouTtAVZDtW0PGXez/PDn20T85uRK3hqWhTtII=
+github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107182923-3eaab56177c1/go.mod h1:BxrfD64EFIBLJsrfJE8g1tuRV+/mV937D/22f9ipkUw=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 go.yaml.in/yaml/v3 v3.0.6 h1:zcDfvjXEqTQmpjniUBLc91xYJMB2c4QOFxEF/LCEckM=

@@ -9,7 +9,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -179,20 +178,30 @@ func rewindRequestBody(req *http.Request) (err error) {
 //     retries even when retry is true.
 type RetryPolicy func(ctx context.Context, req *http.Request, resp *http.Response, err error, attempt int) (retry bool, rerr error)
 
-var (
-	// redirectsErrorRegex matches the error net/http produces when the
-	// configured redirect limit is exhausted. The error is not typed
-	// specifically, so matching on the message is the only way to detect it;
-	// the check is isolated here so the string match lives in exactly one
-	// place.
-	redirectsErrorRegex = regexp.MustCompile(`stopped after \d+ redirects\z`)
+func isRedirectLimitError(message string) bool {
+	const (
+		prefix = "stopped after "
+		suffix = " redirects"
+	)
 
-	// schemeErrorRegex matches the error net/http produces for an unsupported
-	// protocol scheme. The error is not typed specifically, so matching on the
-	// message is the only way to detect it; the check is isolated here so the
-	// string match lives in exactly one place.
-	schemeErrorRegex = regexp.MustCompile(`unsupported protocol scheme`)
-)
+	start := strings.LastIndex(message, prefix)
+	if start < 0 || !strings.HasSuffix(message, suffix) {
+		return false
+	}
+
+	digits := message[start+len(prefix) : len(message)-len(suffix)]
+	if digits == "" {
+		return false
+	}
+
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+
+	return true
+}
 
 // DefaultRetryPolicy is the default [RetryPolicy]: it retries connection and
 // transport errors, 408 Request Timeout, 429 Too Many Requests, and 5xx
@@ -321,7 +330,7 @@ func isPermanentTransportError(err error) (permanent bool) {
 		return false
 	}
 
-	if redirectsErrorRegex.MatchString(err.Error()) || schemeErrorRegex.MatchString(err.Error()) {
+	if isRedirectLimitError(err.Error()) || strings.Contains(err.Error(), "unsupported protocol scheme") {
 		return true
 	}
 

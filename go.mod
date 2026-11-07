@@ -3,7 +3,7 @@ module github.com/hueristiq/hq-lib-http-go
 go 1.26.0
 
 require (
-	github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107133835-9279eb9ddd6e
+	github.com/hueristiq/hq-lib-retrier-go v0.0.0-20261107182923-3eaab56177c1
 	github.com/stretchr/testify v1.12.1
 )
 
