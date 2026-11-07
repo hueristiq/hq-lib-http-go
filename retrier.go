@@ -15,7 +15,6 @@ import (
 	"time"
 
 	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
-	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 )
 
 const (
@@ -106,86 +105,23 @@ func isHTTP1BrokenTransportError(err error) (broken bool) {
 	return broken
 }
 
-// canReplayRequestBody reports whether req's body can be sent again, without
-// performing the rewind. A reusable body is always replayable; any other body
-// needs GetBody.
-//
-// Parameters:
-//   - req (*http.Request): the request to inspect.
-//
-// Returns:
-//   - replayable (bool): true when the body can be prepared for another send.
+// canReplayRequestBody reports whether req can be sent again through GetBody.
 func canReplayRequestBody(req *http.Request) (replayable bool) {
-	if req.Body == nil || req.Body == http.NoBody {
-		return true
-	}
-
-	if _, isReusable := req.Body.(*hqgohttprequest.ReusableReadCloser); isReusable {
-		return true
-	}
-
-	replayable = req.GetBody != nil
-
-	return replayable
+	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 }
 
-// canResendRequest reports whether the internal protocol fallback may resend
-// req. When idempotentOnly is set, only idempotent methods qualify; the body
-// must also be replayable.
-//
-// Parameters:
-//   - req (*http.Request): the request to inspect.
-//   - idempotentOnly (bool): whether non-idempotent methods are excluded.
-//
-// Returns:
-//   - resendable (bool): true when the request may be sent again.
+// canResendRequest reports whether the protocol fallback may resend req.
 func canResendRequest(req *http.Request, idempotentOnly bool) (resendable bool) {
 	if idempotentOnly && !isIdempotentMethod(req.Method) {
 		return false
 	}
 
-	resendable = canReplayRequestBody(req)
-
-	return resendable
+	return canReplayRequestBody(req)
 }
 
-// resetReusableRequestBody rewinds a reusable request body to the start when
-// the request carries one. Other body types are left untouched, since the
-// first attempt owns their initial position.
-//
-// Parameters:
-//   - req (*http.Request): the request whose body is prepared for its first
-//     attempt.
-func resetReusableRequestBody(req *http.Request) {
-	if reusable, isReusable := req.Body.(*hqgohttprequest.ReusableReadCloser); isReusable && reusable != nil {
-		reusable.Reset()
-	}
-}
-
-// rewindRequestBody makes req's body resendable after an attempt, so a retry
-// or the HTTP/2 fallback client can send the request again.
-//
-// A body with nothing to rewind — nil or [http.NoBody] — needs no work. A
-// [*hqgohttprequest.ReusableReadCloser] body is rewound in place. Any other
-// body is refetched through GetBody; without GetBody, or when GetBody fails,
-// the error wraps [ErrBodyNotReplayable].
-//
-// Parameters:
-//   - req (*http.Request): the request whose body is prepared for resending.
-//
-// Returns:
-//   - err (error): nil when the body can be sent again; an error wrapping
-//     [ErrBodyNotReplayable] otherwise.
+// rewindRequestBody replaces a consumed body through req.GetBody.
 func rewindRequestBody(req *http.Request) (err error) {
 	if req.Body == nil || req.Body == http.NoBody {
-		return nil
-	}
-
-	if reusable, isReusable := req.Body.(*hqgohttprequest.ReusableReadCloser); isReusable {
-		if reusable != nil {
-			reusable.Reset()
-		}
-
 		return nil
 	}
 
@@ -193,9 +129,9 @@ func rewindRequestBody(req *http.Request) (err error) {
 		return ErrBodyNotReplayable
 	}
 
-	body, gerr := req.GetBody()
-	if gerr != nil {
-		return fmt.Errorf("%w: %w", ErrBodyNotReplayable, gerr)
+	body, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBodyNotReplayable, err)
 	}
 
 	req.Body = body
@@ -401,90 +337,20 @@ func isPermanentTransportError(err error) (permanent bool) {
 	return false
 }
 
-// DefaultRetryErrorBodyLimit is zero: a [RetryError] does not carry a copy of
-// the final response body unless body capture is explicitly enabled with
-// [WithRetryErrorBodyLimit].
-const DefaultRetryErrorBodyLimit int64 = 0
-
-// RecommendedRetryErrorBodyLimit is the conventional 64 KiB bound for a
-// [RetryError] body snapshot. It is a suggested value for
-// [WithRetryErrorBodyLimit], not a default: body capture is opt-in.
-const RecommendedRetryErrorBodyLimit int64 = 64 << 10
-
-// RetryError reports a retry failure: either the retry budget was exhausted or
-// the request body could not be replayed. It carries the last attempt's HTTP
-// status and headers, and — when body capture is enabled with
-// [WithRetryErrorBodyLimit] — a bounded copy of its body, plus the underlying
-// error. When the last attempt failed before receiving a response, StatusCode
-// is zero and only Err is set.
-//
-// Body capture is disabled by default because response payloads can contain
-// credentials, session tokens, or personal data. When enabled, treat
-// [RetryError.Body], [RetryError.Header], and the query string in
-// [RetryError.URL] as sensitive and redact them before logging.
-//
-// Use errors.As to retrieve it:
-//
-//	var retryErr *RetryError
-//	if errors.As(err, &retryErr) {
-//		fmt.Println(retryErr.StatusCode, string(retryErr.Body))
-//	}
-//
-// It matches [ErrRetriesExhausted] when the retry budget was exhausted. With no
-// retrier configured, a policy-approved failure on an idempotent method such as
-// a GET 5xx still produces a RetryError after one attempt, while a POST or
-// PATCH returns its response with a nil error because idempotency blocks the
-// retry.
-//
-// Fields:
-//   - Attempts (int): the number of attempts made, including the first one.
-//   - Method (string): the request method.
-//   - URL (string): the request URL with the userinfo password redacted; query
-//     parameters are preserved and may contain secrets.
-//   - StatusCode (int): the last response's status code, or zero.
-//   - Status (string): the last response's status line, or empty.
-//   - Header (http.Header): a clone of the last response's headers, or nil.
-//   - Body ([]byte): up to the configured retry-error body limit of the last
-//     response body; nil unless body capture is enabled. The snapshot may be
-//     truncated.
-//   - BodyTruncated (bool): whether Body holds only a prefix of the response.
-//   - BodyErr (error): a read error encountered while capturing the body
-//     snapshot, or nil.
-//   - Err (error): the last attempt's failure. For an outcome stopped by a
-//     body that cannot be replayed, it wraps [ErrBodyNotReplayable].
-//   - History ([]RetryAttempt): every attempt in order, including the last one.
-//
-// A RetryError matches [ErrRetriesExhausted] with errors.Is only when the
-// retry budget was actually exhausted. An outcome stopped because the request
-// body could not be replayed is final: it matches [ErrBodyNotReplayable]
-// instead.
+// RetryError reports transport failure after retries. HTTP responses are
+// returned directly and do not produce this error. Err contains the last
+// transport failure, and History records every attempt.
 type RetryError struct {
-	Attempts      int
-	Method        string
-	URL           string
-	StatusCode    int
-	Status        string
-	Header        http.Header
-	Body          []byte
-	BodyTruncated bool
-	BodyErr       error
-	Err           error
-	History       []RetryAttempt
+	Attempts int
+	Method   string
+	URL      string
+	Err      error
+	History  []RetryAttempt
 
 	final bool
 }
 
 // RetryAttempt describes one attempt recorded in a [RetryError].
-//
-// Fields:
-//   - Attempt (int): the 1-based attempt number.
-//   - StatusCode (int): the response status code, or zero when the attempt
-//     failed before a response arrived.
-//   - Status (string): the response status line, or empty.
-//   - Err (error): the transport error for the attempt; nil for a status-only
-//     failure, whose status is in StatusCode.
-//   - Duration (time.Duration): the attempt's elapsed time, including any
-//     internal protocol fallback.
 type RetryAttempt struct {
 	Attempt    int
 	StatusCode int
@@ -494,104 +360,46 @@ type RetryAttempt struct {
 }
 
 // Error returns the retry failure's message.
-//
-// Returns:
-//   - msg (string): the error message.
 func (e *RetryError) Error() (msg string) {
 	if e == nil {
 		return "http.Client.Do: giving up"
 	}
 
-	if e.StatusCode != 0 {
-		msg = fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s): %s",
-			e.Attempts, e.Method, e.URL, e.Status)
-
-		if e.final && e.Err != nil {
-			msg += ": " + e.Err.Error()
-		}
-
-		return msg
-	}
-
 	if e.Err != nil {
-		msg = fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s): %v",
+		return fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s): %v",
 			e.Attempts, e.Method, e.URL, e.Err)
-
-		return msg
 	}
 
-	msg = fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s)",
+	return fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s)",
 		e.Attempts, e.Method, e.URL)
-
-	return msg
 }
 
 // Unwrap exposes the last attempt's failure for errors.Is and errors.As.
-//
-// Returns:
-//   - err (error): the last attempt's failure.
 func (e *RetryError) Unwrap() (err error) {
 	if e == nil {
 		return nil
 	}
 
-	err = e.Err
-
-	return err
+	return e.Err
 }
 
-// Is reports whether target is [ErrRetriesExhausted], so callers can classify
-// an exhaustion with errors.Is without depending on the error message. An
-// outcome stopped by a body that could not be replayed is final and does not
-// match the sentinel; it matches [ErrBodyNotReplayable] through [RetryError.Unwrap].
-//
-// Parameters:
-//   - target (error): the sentinel to compare.
-//
-// Returns:
-//   - match (bool): true when target is [ErrRetriesExhausted] and the retry
-//     budget was exhausted.
+// Is reports whether target is [ErrRetriesExhausted]. A failure caused by a
+// body that cannot be replayed matches [ErrBodyNotReplayable] instead.
 func (e *RetryError) Is(target error) (match bool) {
 	if target != ErrRetriesExhausted {
 		return false
 	}
 
-	if e == nil {
-		return true
-	}
-
-	match = !e.final
-
-	return match
+	return e == nil || !e.final
 }
 
-// retryableError marks an attempt's failure as worth another attempt. The
-// retry engine retries only errors carrying this marker — an unwrapped error
-// from the attempt operation is final and returned to the caller unchanged —
-// and [Client.Do] unwraps the marker when the attempts run out, so the caller
-// never sees it.
-//
-// Fields:
-//   - err (error): the attempt's failure: its transport error, or a status
-//     error describing the rejected response.
-//   - resp (*http.Response): the final response, when one was received. Its
-//     body has been drained or snapshotted and closed.
-//   - body ([]byte): a bounded copy of the final response body.
-//   - bodyTruncated (bool): whether body holds only a prefix.
-//   - bodyErr (error): a read error from capturing the body snapshot.
-//   - attempt (int): the 1-based attempt number.
-//   - final (bool): whether the outcome is terminal even though it carries the
-//     marker, such as a body that cannot be replayed. The retry engine does not
-//     schedule another attempt for a final marker, and [Client.Do] still turns
-//     it into a [RetryError].
+// retryableError marks an outcome approved for retry. A final marker reports
+// that a transport failure could not be resent because its body was exhausted.
 type retryableError struct {
-	err           error
-	resp          *http.Response
-	body          []byte
-	bodyTruncated bool
-	bodyErr       error
-	attempt       int
-	final         bool
+	err     error
+	resp    *http.Response
+	attempt int
+	final   bool
 }
 
 // Error returns the wrapped failure's message.

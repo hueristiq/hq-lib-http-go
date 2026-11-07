@@ -1,37 +1,24 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
+	"time"
 )
 
-// cloneHTTPClient returns a shallow copy of client. It is used before applying
-// library-managed fields so the caller's client is never mutated.
-//
-// Parameters:
-//   - client (*http.Client): the client to copy.
-//
-// Returns:
-//   - clone (*http.Client): the copy, or nil when client is nil.
 func cloneHTTPClient(client *http.Client) (clone *http.Client) {
 	if client == nil {
 		return nil
 	}
 
 	copied := *client
-	clone = &copied
 
-	return clone
+	return &copied
 }
 
-// applyClientOptions sets the redirect policy and cookie jar on client when
-// the corresponding options were supplied.
-//
-// Parameters:
-//   - client (*http.Client): the client to configure.
-//
-// Returns:
-//   - configured (*http.Client): the same client.
 func (c *Client) applyClientOptions(client *http.Client) (configured *http.Client) {
 	if client == nil {
 		return nil
@@ -45,40 +32,15 @@ func (c *Client) applyClientOptions(client *http.Client) (configured *http.Clien
 		client.Jar = c.config.CookieJar
 	}
 
-	configured = client
-
-	return configured
-}
-
-// configureHTTP3Client prepares the application-supplied HTTP/3 client. It is
-// used as-is unless the redirect or cookie-jar option is set, in which case a
-// shallow copy is configured so the caller's client is never mutated.
-//
-// Returns:
-//   - client (*http.Client): the HTTP/3 client to use, or nil when none was
-//     supplied.
-func (c *Client) configureHTTP3Client() (client *http.Client) {
-	client = c.config.HTTP3Client
-	if client == nil {
-		return nil
-	}
-
-	if c.config.checkRedirectSet || c.config.cookieJarSet {
-		client = c.applyClientOptions(cloneHTTPClient(client))
-	}
-
 	return client
 }
 
-// applyProxy sets the proxy selector on transport when the client has one and
-// transport is an [http.Transport]. Application-supplied HTTP/3 clients are
-// left unchanged.
-//
-// Parameters:
-//   - transport (http.RoundTripper): the transport to configure.
-//
-// Returns:
-//   - configured (http.RoundTripper): the same transport.
+func (c *Client) configureHTTP3Client() (client *http.Client) {
+	client = cloneHTTPClient(c.config.HTTP3Client)
+
+	return c.applyClientOptions(client)
+}
+
 func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundTripper) {
 	if c.config.Proxy == nil {
 		return transport
@@ -88,19 +50,9 @@ func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundT
 		httpTransport.Proxy = c.config.Proxy
 	}
 
-	configured = transport
-
-	return configured
+	return transport
 }
 
-// applyTransportWrapper wraps transport when the client has a wrapper. A
-// wrapper that returns nil leaves the original transport unchanged.
-//
-// Parameters:
-//   - transport (http.RoundTripper): the transport to wrap.
-//
-// Returns:
-//   - wrapped (http.RoundTripper): the wrapped transport.
 func (c *Client) applyTransportWrapper(transport http.RoundTripper) (wrapped http.RoundTripper) {
 	if c.config.TransportWrapper == nil {
 		return transport
@@ -108,130 +60,166 @@ func (c *Client) applyTransportWrapper(transport http.RoundTripper) (wrapped htt
 
 	wrapped = c.config.TransportWrapper(transport)
 	if wrapped == nil {
-		wrapped = transport
+		return transport
 	}
 
 	return wrapped
 }
 
-// configureBuiltTransport applies the dial and TLS settings and the transport
-// builder to a library-built transport. Settings are applied only to an
-// *http.Transport; HTTP/3 transports are returned unchanged.
-//
-// Parameters:
-//   - protocol (Protocol): the selected protocol, passed to the builder.
-//   - transport (http.RoundTripper): the protocol-built transport.
-//
-// Returns:
-//   - configured (http.RoundTripper): the configured transport.
-func (c *Client) configureBuiltTransport(protocol Protocol, transport http.RoundTripper) (configured http.RoundTripper) {
-	configured = transport
-
-	httpTransport, ok := transport.(*http.Transport)
-	if !ok {
-		return configured
-	}
-
-	if c.config.DialContext != nil {
-		httpTransport.DialContext = c.config.DialContext
-	}
-
-	if c.config.tlsHandshakeTimeoutSet {
-		httpTransport.TLSHandshakeTimeout = c.config.TLSHandshakeTimeout
-	}
-
-	if c.config.TransportBuilder != nil {
-		if built := c.config.TransportBuilder(protocol, httpTransport); built != nil {
-			configured = built
-		}
-	}
-
-	return configured
-}
-
-// configureTransport applies the built-transport settings, the client's proxy,
-// and the wrapper to a library-built transport. A supplied transport takes
-// precedence over all of them.
-//
-// Parameters:
-//   - protocol (Protocol): the selected protocol, passed to the builder.
-//   - transport (http.RoundTripper): the protocol-built transport.
-//
-// Returns:
-//   - configured (http.RoundTripper): the configured transport.
-func (c *Client) configureTransport(protocol Protocol, transport http.RoundTripper) (configured http.RoundTripper) {
-	if c.config.Transport != nil {
-		return c.config.Transport
-	}
-
-	transport = c.configureBuiltTransport(protocol, transport)
+func (c *Client) configureTransport(transport http.RoundTripper) (configured http.RoundTripper) {
 	transport = c.applyProxy(transport)
-	configured = c.applyTransportWrapper(transport)
 
-	return configured
+	return c.applyTransportWrapper(transport)
 }
 
-// proxyFor resolves the proxy that applies to req. It uses the client's
-// selector when one was supplied and the environment proxy otherwise. A nil
-// result means the request is sent directly.
-//
-// Parameters:
-//   - req (*http.Request): the request to resolve the proxy for.
-//
-// Returns:
-//   - proxyURL (*url.URL): the proxy to use, or nil.
-//   - err (error): non-nil when the selector or the environment is invalid.
 func (c *Client) proxyFor(req *http.Request) (proxyURL *url.URL, err error) {
 	if c.config.Proxy != nil {
-		proxyURL, err = c.config.Proxy(req)
-
-		return proxyURL, err
+		return c.config.Proxy(req)
 	}
 
-	proxyURL, err = http.ProxyFromEnvironment(req)
-
-	return proxyURL, err
+	return http.ProxyFromEnvironment(req)
 }
 
-// buildAutoClient builds the auto-negotiating client used by [ProtocolAuto]
-// and as the HTTP/3 fallback.
-//
-// Returns:
-//   - client (*http.Client): the configured client.
 func (c *Client) buildAutoClient() (client *http.Client) {
 	client = newAutoHTTPClient(c.config.TLSConfig)
-	client.Transport = c.configureTransport(ProtocolAuto, client.Transport)
+	client.Transport = c.configureTransport(client.Transport)
 	c.applyClientOptions(client)
 
 	return client
 }
 
-// buildAutoClients builds the primary and h2c fallback clients for
-// [ProtocolAuto].
-//
-// Returns:
-//   - primary (*http.Client): the auto-negotiating client.
-//   - fallback (*http.Client): the h2c fallback client.
 func (c *Client) buildAutoClients() (primary, fallback *http.Client) {
 	primary = newAutoHTTPClient(c.config.TLSConfig)
-
-	if c.config.Transport != nil {
-		primary.Transport = c.config.Transport
-	} else {
-		primary.Transport = c.configureBuiltTransport(ProtocolAuto, primary.Transport)
-		primary.Transport = c.applyProxy(primary.Transport)
-	}
-
+	primary.Transport = c.applyProxy(primary.Transport)
 	c.applyClientOptions(primary)
 
 	fallback = newFallbackClient(primary, c.config.TLSConfig)
-
-	if c.config.Transport == nil {
-		primary.Transport = c.applyTransportWrapper(primary.Transport)
-		fallback.Transport = c.applyTransportWrapper(fallback.Transport)
-	}
-
+	primary.Transport = c.applyTransportWrapper(primary.Transport)
+	fallback.Transport = c.applyTransportWrapper(fallback.Transport)
 	c.applyClientOptions(fallback)
 
 	return primary, fallback
+}
+
+func (c *Client) buildHTTPClients() {
+	if c.config.HTTPClient != nil {
+		c.config.HTTPClient = c.applyClientOptions(cloneHTTPClient(c.config.HTTPClient))
+		c.fallbackHTTPClient = newFallbackClient(c.config.HTTPClient, nil)
+
+		return
+	}
+
+	switch c.config.Protocol {
+	case ProtocolAuto:
+		c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
+	case ProtocolHTTP1:
+		c.config.HTTPClient = newHTTP1Client(c.config.TLSConfig)
+		c.config.HTTPClient.Transport = c.configureTransport(c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
+	case ProtocolHTTP2:
+		c.config.HTTPClient = newHTTP2Client(c.config.TLSConfig)
+		c.config.HTTPClient.Transport = c.configureTransport(c.config.HTTPClient.Transport)
+		c.applyClientOptions(c.config.HTTPClient)
+	case ProtocolHTTP3:
+		c.config.HTTPClient = c.configureHTTP3Client()
+		c.http3Primary = true
+	case ProtocolAutoHTTP3:
+		if c.config.HTTP3Client == nil {
+			c.config.HTTPClient, c.fallbackHTTPClient = c.buildAutoClients()
+
+			return
+		}
+
+		c.config.HTTPClient = c.configureHTTP3Client()
+		c.fallbackHTTPClient = c.buildAutoClient()
+		c.fallbackOnHTTP3 = true
+		c.http3Primary = true
+	}
+}
+
+func shouldFallback(fallbackOnHTTP3 bool, err error) (fallback bool) {
+	if fallbackOnHTTP3 {
+		return isHTTP3FallbackError(err)
+	}
+
+	return isHTTP1BrokenTransportError(err)
+}
+
+func isHTTP3FallbackError(err error) (fallback bool) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	return !isPermanentTransportError(err)
+}
+
+const http3FailureSweepInterval = 64
+
+func (c *Client) http3RecentlyFailed(host string) (failed bool) {
+	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
+		return false
+	}
+
+	value, ok := c.http3Failures.Load(host)
+	if !ok {
+		return false
+	}
+
+	failedAt, ok := value.(time.Time)
+	if !ok || time.Since(failedAt) >= c.config.HTTP3FallbackTTL {
+		c.http3Failures.Delete(host)
+
+		return false
+	}
+
+	return true
+}
+
+func (c *Client) recordHTTP3Failure(host string) {
+	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
+		return
+	}
+
+	c.http3Failures.Store(host, time.Now())
+
+	if c.http3FailureWrites.Add(1)%http3FailureSweepInterval == 0 {
+		c.pruneHTTP3Failures()
+	}
+}
+
+func (c *Client) pruneHTTP3Failures() {
+	ttl := c.config.HTTP3FallbackTTL
+	if ttl <= 0 {
+		return
+	}
+
+	c.http3Failures.Range(func(key, value any) bool {
+		failedAt, ok := value.(time.Time)
+		if !ok || time.Since(failedAt) >= ttl {
+			c.http3Failures.Delete(key)
+		}
+
+		return true
+	})
+}
+
+func (c *Client) clearHTTP3Failure(host string) {
+	if host != "" {
+		c.http3Failures.Delete(host)
+	}
+}
+
+func sameRoundTripper(a, b http.RoundTripper) (same bool) {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+
+	aValue := reflect.ValueOf(a)
+	bValue := reflect.ValueOf(b)
+
+	if aValue.Type() != bValue.Type() || !aValue.Type().Comparable() {
+		return false
+	}
+
+	return aValue.Interface() == bValue.Interface()
 }

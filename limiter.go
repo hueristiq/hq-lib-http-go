@@ -3,46 +3,27 @@ package http
 import (
 	"context"
 	"errors"
+	"net/http"
 )
 
-// RateLimiter paces request attempts. It is the minimal surface the client
-// needs from a rate limiter: *Limiter from github.com/hueristiq/hq-lib-limiter-go
-// satisfies it, and so does any compatible implementation — no module
-// dependency is imposed. Use [RateLimiterFunc] to adapt a plain function.
-//
-// Methods:
-//   - Wait(ctx context.Context) (err error): blocks until the next attempt may
-//     proceed or ctx is done.
+// RateLimiter paces request attempts. Wait receives the request so an
+// implementation can apply per-host or per-endpoint policy. Shared
+// implementations must be safe for concurrent use.
 type RateLimiter interface {
-	// Wait blocks until the next attempt may proceed or ctx is done.
-	//
-	// Parameters:
-	//   - ctx (context.Context): the context bounding the wait.
-	//
-	// Returns:
-	//   - err (error): non-nil when ctx ends before the wait completes.
-	Wait(ctx context.Context) (err error)
+	Wait(ctx context.Context, req *http.Request) (err error)
 }
 
-// RateLimiterFunc adapts an ordinary function to a [RateLimiter], so a caller
-// can plug in a limiter whose method set does not match the interface or wrap
-// one with additional behavior.
-type RateLimiterFunc func(ctx context.Context) (err error)
+// RateLimiterFunc adapts a function to [RateLimiter]. Use it to adapt limiters
+// that only accept a context or to inspect the outgoing request.
+type RateLimiterFunc func(ctx context.Context, req *http.Request) (err error)
 
-// Compile-time guard ensuring [RateLimiterFunc] satisfies [RateLimiter].
 var _ RateLimiter = RateLimiterFunc(nil)
 
-// Wait calls f(ctx).
-//
-// Parameters:
-//   - ctx (context.Context): the context bounding the wait.
-//
-// Returns:
-//   - err (error): whatever f returns, or a nil-limiter error when f is nil.
-func (f RateLimiterFunc) Wait(ctx context.Context) (err error) {
+// Wait calls f(ctx, req), or returns an error when f is nil.
+func (f RateLimiterFunc) Wait(ctx context.Context, req *http.Request) (err error) {
 	if f == nil {
 		return errors.New("http.RateLimiterFunc: nil limiter")
 	}
 
-	return f(ctx)
+	return f(ctx, req)
 }

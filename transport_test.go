@@ -1,13 +1,17 @@
 package http_test
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,179 +19,191 @@ import (
 	hqgohttp "github.com/hueristiq/hq-lib-http-go"
 )
 
-// transportFunc adapts a function to an [http.RoundTripper].
-type transportFunc func(req *http.Request) (res *http.Response, err error)
-
-// RoundTrip executes the function.
-//
-// Parameters:
-//   - req (*http.Request): the request being round-tripped.
-//
-// Returns:
-//   - res (*http.Response): the response.
-//   - err (error): the transport error.
-func (f transportFunc) RoundTrip(req *http.Request) (res *http.Response, err error) {
-	res, err = f(req)
-
-	return
-}
-
-func TestClient_WithTransport(t *testing.T) {
+func TestClientTransportWrapper(t *testing.T) {
 	t.Parallel()
 
-	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		assert.Equal(t, "wrapped", req.Header.Get("X-Transport"))
 
-	transport := transportFunc(func(req *http.Request) (res *http.Response, err error) {
-		calls.Add(1)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	t.Cleanup(server.Close)
 
-		res = &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader("custom transport")),
-			Request:    req,
-		}
+	var wraps atomic.Int32
 
-		return
-	})
+	client := mustNew(t, hqgohttp.WithTransportWrapper(func(base http.RoundTripper) http.RoundTripper {
+		wraps.Add(1)
 
-	client := mustNew(t, hqgohttp.WithTransport(transport))
+		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			clone := req.Clone(req.Context())
+			clone.Header = req.Header.Clone()
+			clone.Header.Set("X-Transport", "wrapped")
 
-	res, err := client.Get("http://example.com/")
+			return base.RoundTrip(clone)
+		})
+	}))
 
+	res, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
 	require.NoError(t, err)
-	assert.Equal(t, "custom transport", readBody(t, res))
-	assert.Equal(t, int32(1), calls.Load())
+	assert.Equal(t, "ok", readBody(t, res))
+	assert.Equal(t, int32(2), wraps.Load(), "primary and fallback transports are wrapped")
 }
 
-func TestClient_WithTransportWrapper(t *testing.T) {
+func TestClientProxy(t *testing.T) {
 	t.Parallel()
 
-	var wrapped atomic.Int32
+	var selectors atomic.Int32
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		assert.Equal(t, "example.test", req.URL.Host)
+		assert.Equal(t, "/resource", req.URL.Path)
+
+		_, _ = io.WriteString(w, "proxied")
+	}))
+	t.Cleanup(proxy.Close)
+
+	proxyURL, err := url.Parse(proxy.URL)
+	require.NoError(t, err)
+	client := mustNew(t, hqgohttp.WithProxy(func(*http.Request) (*url.URL, error) {
+		selectors.Add(1)
+
+		return proxyURL, nil
+	}))
+
+	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.test/resource", http.NoBody))
+	require.NoError(t, err)
+	assert.Equal(t, "proxied", readBody(t, res))
+	assert.Positive(t, selectors.Load())
+}
+
+func TestClientTLSConfigIsCloned(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "secure")
+	}))
+	t.Cleanup(server.Close)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	config := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	client := mustNew(t, hqgohttp.WithTLSConfig(config))
+	config.RootCAs = nil
+
+	res, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
+	require.NoError(t, err)
+	assert.Equal(t, "secure", readBody(t, res))
+}
+
+func TestClientHTTP3FallbackAndFailureCache(t *testing.T) {
+	t.Parallel()
+
+	var h3Calls atomic.Int32
+
+	h3 := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		h3Calls.Add(1)
+
+		return nil, errors.New("QUIC unavailable")
+	})}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "fallback")
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustNew(t,
+		hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3),
+		hqgohttp.WithHTTP3Client(h3),
+	)
+	for range 2 {
+		res, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
+		require.NoError(t, err)
+		assert.Equal(t, "fallback", readBody(t, res))
+	}
+
+	assert.Equal(t, int32(1), h3Calls.Load(), "the second request skips a recently failed host")
+}
+
+func TestClientHTTP3RejectsProxy(t *testing.T) {
+	t.Parallel()
+
+	var h3Calls atomic.Int32
+
+	h3 := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		h3Calls.Add(1)
+
+		return nil, errors.New("unexpected call")
+	})}
+	proxyURL, err := url.Parse("http://proxy.example")
+	require.NoError(t, err)
+	client := mustNew(t,
+		hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP3),
+		hqgohttp.WithHTTP3Client(h3),
+		hqgohttp.WithProxy(func(*http.Request) (*url.URL, error) { return proxyURL, nil }),
+	)
+
+	res, err := client.Do(newRequest(t, http.MethodGet, "https://example.com", http.NoBody)) //nolint:bodyclose // Proxy rejection returns no response.
+	require.ErrorIs(t, err, hqgohttp.ErrHTTP3ProxyUnsupported)
+	assert.Nil(t, res)
+	assert.Zero(t, h3Calls.Load())
+}
+
+func TestClientAutoHTTP3WithoutClientUsesHTTP1Or2(t *testing.T) {
+	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "wrapped")
+		_, _ = io.WriteString(w, "auto")
 	}))
-
 	t.Cleanup(server.Close)
 
-	wrapper := func(base http.RoundTripper) http.RoundTripper {
-		return transportFunc(func(req *http.Request) (res *http.Response, err error) {
-			wrapped.Add(1)
-
-			return base.RoundTrip(req)
-		})
-	}
-
-	client := mustNew(t, hqgohttp.WithTransportWrapper(wrapper))
-
-	res, err := client.Get(server.URL)
-
+	client := mustNew(t, hqgohttp.WithProtocol(hqgohttp.ProtocolAutoHTTP3))
+	res, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
 	require.NoError(t, err)
-	assert.Equal(t, "wrapped", readBody(t, res))
-	assert.Equal(t, int32(1), wrapped.Load())
+	assert.Equal(t, "auto", readBody(t, res))
 }
 
-func TestClient_WithTransportWrapperPreservesHTTP2(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "h2")
-	}))
-
-	server.EnableHTTP2 = true
-	server.StartTLS()
-
-	t.Cleanup(server.Close)
-
-	wrapper := func(base http.RoundTripper) http.RoundTripper {
-		return base
-	}
-
-	client := mustNew(t, hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP2),
-		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
-		hqgohttp.WithTransportWrapper(wrapper),
-	)
-
-	res, err := client.Get(server.URL)
-
-	require.NoError(t, err)
-	assert.Equal(t, 2, res.ProtoMajor)
-	assert.Equal(t, "h2", readBody(t, res))
+type closeCountingTransport struct {
+	closes atomic.Int32
 }
 
-func TestClient_WithCheckRedirect(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/start" {
-			http.Redirect(w, r, "/final", http.StatusFound)
-
-			return
-		}
-
-		_, _ = io.WriteString(w, "final")
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := mustNew(t, hqgohttp.WithCheckRedirect(func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}),
-	)
-
-	res, err := client.Get(server.URL + "/start")
-
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusFound, res.StatusCode)
-	assert.Equal(t, "/final", res.Header.Get("Location"))
-	require.NoError(t, res.Body.Close())
+func (t *closeCountingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("ok")),
+		Request:    req,
+	}, nil
 }
 
-func TestClient_WithCookieJar(t *testing.T) {
+func (t *closeCountingTransport) CloseIdleConnections() {
+	t.closes.Add(1)
+}
+
+func TestClientPeriodicIdleConnectionClose(t *testing.T) {
 	t.Parallel()
 
-	jar, err := cookiejar.New(nil)
-
-	require.NoError(t, err)
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/set" {
-			http.SetCookie(w, &http.Cookie{
-				Name:     "session",
-				Value:    "abc",
-				Path:     "/",
-				Secure:   true,
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-			})
-			w.WriteHeader(http.StatusNoContent)
-
-			return
-		}
-
-		if _, err := r.Cookie("session"); err != nil {
-			http.Error(w, "missing cookie", http.StatusBadRequest)
-
-			return
-		}
-
-		_, _ = io.WriteString(w, "present")
-	}))
-
-	t.Cleanup(server.Close)
-
-	client := mustNew(t, hqgohttp.WithCookieJar(jar),
-		hqgohttp.WithTLSConfig(protocolTLSTrust(server)),
+	transport := &closeCountingTransport{}
+	client := mustNew(t,
+		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
+		hqgohttp.WithMaxRequestsBeforeIdleClose(1),
 	)
 
-	res, err := client.Get(server.URL + "/set")
-
+	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com", http.NoBody))
 	require.NoError(t, err)
 	require.NoError(t, res.Body.Close())
+	assert.Equal(t, int32(1), transport.closes.Load())
+}
 
-	res, err = client.Get(server.URL + "/check")
+func TestClientCustomTransport(t *testing.T) {
+	t.Parallel()
 
+	transport := &closeCountingTransport{}
+	client := mustNew(t, hqgohttp.WithHTTPClient(&http.Client{Transport: transport, Timeout: time.Second}))
+
+	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com", http.NoBody))
 	require.NoError(t, err)
-	assert.Equal(t, "present", readBody(t, res))
+	assert.Equal(t, "ok", readBody(t, res))
+
+	client.CloseIdleConnections()
+	assert.Equal(t, int32(1), transport.closes.Load())
 }

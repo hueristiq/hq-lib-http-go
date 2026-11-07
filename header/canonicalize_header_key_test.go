@@ -113,17 +113,3 @@ func FuzzCanonicalizeHeaderKey(f *testing.F) {
 		}
 	})
 }
-
-var canonicalSink string
-
-// BenchmarkCanonicalizeHeaderKey measures the header canonicalization hot
-// path used on every header set.
-func BenchmarkCanonicalizeHeaderKey(b *testing.B) {
-	key := "x-forwarded-for"
-
-	b.ReportAllocs()
-
-	for range b.N {
-		canonicalSink = hqgohttpheader.CanonicalizeHeaderKey(key)
-	}
-}

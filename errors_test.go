@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	hqgohttp "github.com/hueristiq/hq-lib-http-go"
-	hqgohttprequest "github.com/hueristiq/hq-lib-http-go/request"
 )
 
 func TestSentinelErrors(t *testing.T) {
@@ -16,22 +15,17 @@ func TestSentinelErrors(t *testing.T) {
 	sentinels := []error{
 		hqgohttp.ErrNilRequest,
 		hqgohttp.ErrNilRequestURL,
-		hqgohttp.ErrNoURL,
 		hqgohttp.ErrBodyNotReplayable,
-		hqgohttp.ErrRequestBodyTooLarge,
-		hqgohttp.ErrResponseBodyTooLarge,
+		hqgohttp.ErrHTTP3ClientRequired,
 		hqgohttp.ErrHTTP3ProxyUnsupported,
 		hqgohttp.ErrRetriesExhausted,
 		hqgohttp.ErrClientClosed,
 	}
-
 	for _, sentinel := range sentinels {
 		require.Error(t, sentinel)
 	}
 
-	wrapped := fmt.Errorf("wrapped: %w", hqgohttp.ErrRequestBodyTooLarge)
-
-	require.ErrorIs(t, wrapped, hqgohttprequest.ErrBodyTooLarge)
-	require.ErrorIs(t, wrapped, hqgohttp.ErrRequestBodyTooLarge)
-	require.NotErrorIs(t, wrapped, hqgohttp.ErrResponseBodyTooLarge)
+	wrapped := fmt.Errorf("wrapped: %w", hqgohttp.ErrBodyNotReplayable)
+	require.ErrorIs(t, wrapped, hqgohttp.ErrBodyNotReplayable)
+	require.NotErrorIs(t, wrapped, hqgohttp.ErrRetriesExhausted)
 }

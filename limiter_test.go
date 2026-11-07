@@ -3,8 +3,9 @@ package http_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestRateLimiterFunc(t *testing.T) {
 
 	var _ hqgohttp.RateLimiter = hqgohttp.RateLimiterFunc(nil)
 
-	t.Run("delegates with the given context", func(t *testing.T) {
+	t.Run("receives context and request", func(t *testing.T) {
 		t.Parallel()
 
 		type contextKey struct{}
@@ -27,69 +28,83 @@ func TestRateLimiterFunc(t *testing.T) {
 		errWait := errors.New("rate limit exceeded")
 
 		var (
-			calls    atomic.Int32
-			gotValue any
+			calls      atomic.Int32
+			gotValue   any
+			gotRequest *http.Request
 		)
 
 		ctx := context.WithValue(t.Context(), contextKey{}, "marker")
-
-		limiter := hqgohttp.RateLimiterFunc(func(ctx context.Context) error {
+		req := newRequest(t, http.MethodGet, "http://example.com", http.NoBody)
+		limiter := hqgohttp.RateLimiterFunc(func(ctx context.Context, req *http.Request) error {
 			calls.Add(1)
 
 			gotValue = ctx.Value(contextKey{})
+			gotRequest = req
 
 			return errWait
 		})
 
-		err := limiter.Wait(ctx)
-
+		err := limiter.Wait(ctx, req)
 		require.ErrorIs(t, err, errWait)
 		assert.Equal(t, "marker", gotValue)
-		assert.Equal(t, int32(1), calls.Load(), "Expected exactly one delegation")
+		assert.Same(t, req, gotRequest)
+		assert.Equal(t, int32(1), calls.Load())
 	})
 
-	t.Run("stops the client execution with its error", func(t *testing.T) {
+	t.Run("stops the client before an attempt", func(t *testing.T) {
 		t.Parallel()
 
 		errLimit := errors.New("limiter unavailable")
 
 		var calls atomic.Int32
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("unreachable"))
-		}))
+		client := mustNew(t, hqgohttp.WithRateLimiter(hqgohttp.RateLimiterFunc(func(context.Context, *http.Request) error {
+			calls.Add(1)
 
-		t.Cleanup(server.Close)
+			return errLimit
+		})))
 
-		client := mustNew(t,
-			hqgohttp.WithRateLimiter(hqgohttp.RateLimiterFunc(func(context.Context) error {
-				calls.Add(1)
-
-				return errLimit
-			})),
-		)
-
-		res, err := client.Get(server.URL)
-
+		res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com", http.NoBody)) //nolint:bodyclose // The limiter rejects the request before transport.
 		require.ErrorIs(t, err, errLimit)
-
-		if res != nil {
-			require.NoError(t, res.Body.Close())
-		}
-
 		assert.Nil(t, res)
-		assert.Equal(t, int32(1), calls.Load(),
-			"Expected the limiter failure to abort before any retry")
+		assert.Equal(t, int32(1), calls.Load())
 	})
 }
 
-func TestRateLimiterFunc_Nil(t *testing.T) {
+func TestRateLimiterFuncNil(t *testing.T) {
 	t.Parallel()
 
 	var limiter hqgohttp.RateLimiterFunc
 
-	err := limiter.Wait(t.Context())
-
+	err := limiter.Wait(t.Context(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil limiter")
+}
+
+func TestClientRequestAwareRateLimiter(t *testing.T) {
+	t.Parallel()
+
+	var limitedHost atomic.Value
+
+	client := mustNew(t,
+		hqgohttp.WithRateLimiter(hqgohttp.RateLimiterFunc(func(_ context.Context, req *http.Request) error {
+			limitedHost.Store(req.URL.Hostname())
+
+			return nil
+		})),
+		hqgohttp.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Request:    req,
+			}, nil
+		})}),
+	)
+
+	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com/resource", http.NoBody))
+	require.NoError(t, err)
+	assert.Equal(t, "ok", readBody(t, res))
+	assert.Equal(t, "example.com", limitedHost.Load())
 }

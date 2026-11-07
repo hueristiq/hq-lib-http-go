@@ -16,7 +16,7 @@ import (
 // the closer returns io.EOF when the data is exhausted. Call [Reset] to read
 // the payload again.
 //
-// An *http.Request built with [New] exposes a GetBody function that returns a
+// An *http.Request built with GetBody exposes a GetBody function that returns a
 // fresh closer, so retries and redirects replay the full payload without
 // relying on the reader's position.
 //
@@ -84,7 +84,7 @@ func (r *ReusableReadCloser) Reset() {
 
 // clone returns an independent closer over the same immutable payload,
 // positioned at the start. It backs the GetBody function of requests built by
-// [New].
+// GetBody.
 //
 // Returns:
 //   - clone (*ReusableReadCloser): a fresh closer over the same data.

@@ -1,6 +1,7 @@
-package http
+package http_test
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	hqgohttp "github.com/hueristiq/hq-lib-http-go"
 )
 
-var _ Logger = (*slog.Logger)(nil)
+var _ hqgohttp.Logger = (*slog.Logger)(nil)
 
 type logRecord struct {
 	level string
@@ -27,10 +30,9 @@ type captureLogger struct {
 
 func (l *captureLogger) add(level, msg string, args ...any) {
 	fields := make(map[string]any, len(args)/2)
-
-	for i := 0; i+1 < len(args); i += 2 {
-		key, _ := args[i].(string)
-		fields[key] = args[i+1]
+	for index := 0; index+1 < len(args); index += 2 {
+		key, _ := args[index].(string)
+		fields[key] = args[index+1]
 	}
 
 	l.mu.Lock()
@@ -40,11 +42,8 @@ func (l *captureLogger) add(level, msg string, args ...any) {
 }
 
 func (l *captureLogger) Debug(msg string, args ...any) { l.add("debug", msg, args...) }
-
-func (l *captureLogger) Info(msg string, args ...any) { l.add("info", msg, args...) }
-
-func (l *captureLogger) Warn(msg string, args ...any) { l.add("warn", msg, args...) }
-
+func (l *captureLogger) Info(msg string, args ...any)  { l.add("info", msg, args...) }
+func (l *captureLogger) Warn(msg string, args ...any)  { l.add("warn", msg, args...) }
 func (l *captureLogger) Error(msg string, args ...any) { l.add("error", msg, args...) }
 
 func (l *captureLogger) find(level, msg string) (record logRecord, ok bool) {
@@ -73,12 +72,11 @@ func TestLoggerSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	logger := &captureLogger{}
-	client := mustNew(t, WithLogger(logger))
-
-	response, err := client.Get(server.URL)
+	client := mustNew(t, hqgohttp.WithLogger(logger))
+	response, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 
@@ -100,7 +98,6 @@ func TestLoggerRetry(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
-
 		if calls == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
 
@@ -109,13 +106,11 @@ func TestLoggerRetry(t *testing.T) {
 
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	logger := &captureLogger{}
-
-	client := mustNew(t, WithRetryMaxAttempts(2), WithLogger(logger))
-
-	response, err := client.Get(server.URL)
+	client := mustNew(t, hqgohttp.WithRetryMaxAttempts(2), hqgohttp.WithLogger(logger))
+	response, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 
@@ -128,22 +123,26 @@ func TestLoggerRetry(t *testing.T) {
 func TestLoggerFailure(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
 	logger := &captureLogger{}
+	client := mustNew(t,
+		hqgohttp.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport failed")
+		})}),
+		hqgohttp.WithRetryMaxAttempts(1),
+		hqgohttp.WithLogger(logger),
+	)
 
-	client := mustNew(t, WithRetryMaxAttempts(1), WithLogger(logger))
-
-	_, err := client.Get(server.URL)
+	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com", http.NoBody)) //nolint:bodyclose // Transport failure returns no response.
 	require.Error(t, err)
+	assert.Nil(t, res)
 
 	failureLog, ok := logger.find("error", "http request failed")
 	require.True(t, ok)
 	assert.Equal(t, 1, failureLog.args["attempts"])
-	assert.Error(t, failureLog.args["error"].(error)) //nolint:forcetypeassert // the logger always stores an error here.
+
+	loggedErr, ok := failureLog.args["error"].(error)
+	require.True(t, ok)
+	assert.Error(t, loggedErr)
 }
 
 func TestLoggerRequestOverride(t *testing.T) {
@@ -152,17 +151,17 @@ func TestLoggerRequestOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	clientLogger := &captureLogger{}
 	requestLogger := &captureLogger{}
-
-	client := mustNew(t, WithLogger(clientLogger))
-
-	response, err := client.Get(server.URL, WithRequestLogger(requestLogger))
+	client := mustNew(t, hqgohttp.WithLogger(clientLogger))
+	response, err := client.Do(
+		newRequest(t, http.MethodGet, server.URL, http.NoBody),
+		hqgohttp.WithRequestLogger(requestLogger),
+	)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
-
 	assert.True(t, clientLogger.empty())
 	assert.False(t, requestLogger.empty())
 }
@@ -173,7 +172,7 @@ func TestLoggerRedactsURLPassword(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	requestURL, err := url.Parse(server.URL)
 	require.NoError(t, err)
@@ -181,9 +180,8 @@ func TestLoggerRedactsURLPassword(t *testing.T) {
 	requestURL.User = url.UserPassword("user", "secret")
 
 	logger := &captureLogger{}
-	client := mustNew(t, WithLogger(logger))
-
-	response, err := client.Get(requestURL.String())
+	client := mustNew(t, hqgohttp.WithLogger(logger))
+	response, err := client.Do(newRequest(t, http.MethodGet, requestURL.String(), http.NoBody))
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 
@@ -199,11 +197,10 @@ func TestLoggerDisabled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client := mustNew(t)
-
-	response, err := client.Get(server.URL)
+	response, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody))
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 }

@@ -1,7 +1,6 @@
 package request
 
 import (
-	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -88,36 +87,6 @@ func TestIsNilReader(t *testing.T) {
 	assert.True(t, isNilReader(pointer))
 	assert.False(t, isNilReader(strings.NewReader("")))
 	assert.False(t, isNilReader(valueReader{}))
-}
-
-func TestGetReusableBodyReadCloser_NilFunc(t *testing.T) {
-	t.Parallel()
-
-	reader, err := getReusableBodyReadCloser((func() (io.Reader, error))(nil), 0)
-
-	require.NoError(t, err)
-	assert.Nil(t, reader)
-}
-
-func TestGetReusableBodyReadCloser_FuncError(t *testing.T) {
-	t.Parallel()
-
-	errBody := errors.New("body failed")
-
-	_, err := getReusableBodyReadCloser(func() (io.Reader, error) {
-		return nil, errBody
-	}, 0)
-
-	require.ErrorIs(t, err, errBody)
-}
-
-func TestGetReusableBodyReadCloser_TypedNil(t *testing.T) {
-	t.Parallel()
-
-	reader, err := getReusableBodyReadCloser((*ReusableReadCloser)(nil), 0)
-
-	require.NoError(t, err)
-	assert.Nil(t, reader)
 }
 
 func TestReusableReadCloser_ZeroValueRead(t *testing.T) {

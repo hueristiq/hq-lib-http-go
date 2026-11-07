@@ -392,11 +392,12 @@ func TestReusableReadCloser_ZeroValue(t *testing.T) {
 
 	assert.Zero(t, n)
 	require.ErrorIs(t, err, io.EOF)
+}
 
-	closer.Reset()
+type errorReader struct {
+	err error
+}
 
-	req, err := hqgohttprequest.New(t.Context(), "POST", "http://example.com", &closer)
-
-	require.NoError(t, err)
-	assert.Zero(t, req.ContentLength)
+func (r errorReader) Read(_ []byte) (n int, err error) {
+	return 0, r.err
 }
