@@ -130,8 +130,6 @@ func TestClientAttemptTimeout(t *testing.T) {
 	var attempts atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		attempts.Add(1)
-
 		select {
 		case <-time.After(150 * time.Millisecond):
 			w.WriteHeader(http.StatusOK)
@@ -144,6 +142,7 @@ func TestClientAttemptTimeout(t *testing.T) {
 		hqgohttp.WithAttemptTimeout(20*time.Millisecond),
 		hqgohttp.WithRetryMaxAttempts(2),
 		hqgohttp.WithTimeout(2*time.Second),
+		hqgohttp.WithOnRequest(func(hqgohttp.RequestEvent) { attempts.Add(1) }),
 	)
 
 	res, err := client.Do(newRequest(t, http.MethodGet, server.URL, http.NoBody)) //nolint:bodyclose // The timeout returns no response.
