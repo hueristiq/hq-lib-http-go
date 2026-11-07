@@ -50,7 +50,11 @@ func TestExecutionTimerExpiresBeforeHeaders(t *testing.T) {
 
 	defer exec.release()
 
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-exec.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("execution context did not expire")
+	}
 
 	if cause := context.Cause(exec.ctx); !errors.Is(cause, context.DeadlineExceeded) {
 		t.Fatalf("execution context cause = %v, want %v", cause, context.DeadlineExceeded)
