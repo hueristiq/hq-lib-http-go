@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// cloneHTTPClient shallow-copies a caller-supplied client so library-applied
+// redirect and cookie options never mutate the original.
+//
+// Parameters:
+//   - client (*http.Client): the client to clone, or nil.
+//
+// Returns:
+//   - clone (*http.Client): the copy, or nil.
 func cloneHTTPClient(client *http.Client) (clone *http.Client) {
 	if client == nil {
 		return nil
@@ -19,6 +27,14 @@ func cloneHTTPClient(client *http.Client) (clone *http.Client) {
 	return &copied
 }
 
+// applyClientOptions installs the redirect policy and cookie jar the caller
+// explicitly set. Options left unset keep the client's own values.
+//
+// Parameters:
+//   - client (*http.Client): the client to configure, or nil.
+//
+// Returns:
+//   - configured (*http.Client): the same client, mutated in place.
 func (c *Client) applyClientOptions(client *http.Client) (configured *http.Client) {
 	if client == nil {
 		return nil
@@ -35,12 +51,26 @@ func (c *Client) applyClientOptions(client *http.Client) (configured *http.Clien
 	return client
 }
 
+// configureHTTP3Client clones the injected HTTP/3 client and applies the
+// redirect and cookie options to the clone.
+//
+// Returns:
+//   - client (*http.Client): the configured HTTP/3 client.
 func (c *Client) configureHTTP3Client() (client *http.Client) {
 	client = cloneHTTPClient(c.config.HTTP3Client)
 
 	return c.applyClientOptions(client)
 }
 
+// applyProxy installs the configured proxy selector on a library-built
+// transport. Non-*http.Transport wrappers pass through untouched.
+//
+// Parameters:
+//   - transport (http.RoundTripper): the transport to configure.
+//
+// Returns:
+//   - configured (http.RoundTripper): the same transport, mutated in place
+//     when it is an *http.Transport.
 func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundTripper) {
 	if c.config.Proxy == nil {
 		return transport
@@ -53,6 +83,14 @@ func (c *Client) applyProxy(transport http.RoundTripper) (configured http.RoundT
 	return transport
 }
 
+// applyTransportWrapper runs the configured transport decorator. A nil
+// wrapper — or one returning nil — preserves the input transport.
+//
+// Parameters:
+//   - transport (http.RoundTripper): the transport to decorate.
+//
+// Returns:
+//   - wrapped (http.RoundTripper): the decorated transport.
 func (c *Client) applyTransportWrapper(transport http.RoundTripper) (wrapped http.RoundTripper) {
 	if c.config.TransportWrapper == nil {
 		return transport
@@ -66,12 +104,29 @@ func (c *Client) applyTransportWrapper(transport http.RoundTripper) (wrapped htt
 	return wrapped
 }
 
+// configureTransport applies the proxy and the transport wrapper, in that
+// order so the wrapper decorates the proxied transport.
+//
+// Parameters:
+//   - transport (http.RoundTripper): the library-built transport.
+//
+// Returns:
+//   - configured (http.RoundTripper): the fully configured transport.
 func (c *Client) configureTransport(transport http.RoundTripper) (configured http.RoundTripper) {
 	transport = c.applyProxy(transport)
 
 	return c.applyTransportWrapper(transport)
 }
 
+// proxyFor resolves the proxy for req: the configured selector when present,
+// the environment otherwise.
+//
+// Parameters:
+//   - req (*http.Request): the request to route.
+//
+// Returns:
+//   - proxyURL (*url.URL): the proxy, or nil for a direct connection.
+//   - err (error): non-nil when the selector fails.
 func (c *Client) proxyFor(req *http.Request) (proxyURL *url.URL, err error) {
 	if c.config.Proxy != nil {
 		return c.config.Proxy(req)
@@ -80,6 +135,12 @@ func (c *Client) proxyFor(req *http.Request) (proxyURL *url.URL, err error) {
 	return http.ProxyFromEnvironment(req)
 }
 
+// buildAutoClient builds the standalone auto-mode client used as the
+// HTTP/3-primary fallback: pooled HTTP/1.x-HTTP/2 with the transport fully
+// configured.
+//
+// Returns:
+//   - client (*http.Client): the constructed client.
 func (c *Client) buildAutoClient() (client *http.Client) {
 	client = newAutoHTTPClient(c.config.TLSConfig)
 	client.Transport = c.configureTransport(client.Transport)
@@ -88,6 +149,13 @@ func (c *Client) buildAutoClient() (client *http.Client) {
 	return client
 }
 
+// buildAutoClients builds the primary and fallback pair for [ProtocolAuto]
+// and HTTP/3-less [ProtocolAutoHTTP3]. The fallback derives from the primary
+// before the wrapper runs, so wrapping cannot stack decorators.
+//
+// Returns:
+//   - primary (*http.Client): the pooled auto-negotiating client.
+//   - fallback (*http.Client): the HTTP/2-capable resend client.
 func (c *Client) buildAutoClients() (primary, fallback *http.Client) {
 	primary = newAutoHTTPClient(c.config.TLSConfig)
 	primary.Transport = c.applyProxy(primary.Transport)
@@ -101,6 +169,10 @@ func (c *Client) buildAutoClients() (primary, fallback *http.Client) {
 	return primary, fallback
 }
 
+// buildHTTPClients materializes the configured protocol mode into the
+// client's primary and fallback HTTP clients, applying TLS, proxy, wrapper,
+// redirect, and cookie options. An injected client is cloned and paired with
+// a derived fallback.
 func (c *Client) buildHTTPClients() {
 	if c.config.HTTPClient != nil {
 		c.config.HTTPClient = c.applyClientOptions(cloneHTTPClient(c.config.HTTPClient))
@@ -137,6 +209,16 @@ func (c *Client) buildHTTPClients() {
 	}
 }
 
+// shouldFallback reports whether a failed primary attempt may resend on the
+// fallback client: transient HTTP/3 failures in HTTP/3-fallback mode, or the
+// broken-HTTP/1.x-transport signature otherwise.
+//
+// Parameters:
+//   - fallbackOnHTTP3 (bool): whether the mode resends after HTTP/3 failures.
+//   - err (error): the primary failure to classify.
+//
+// Returns:
+//   - fallback (bool): true when a resend on the fallback may succeed.
 func shouldFallback(fallbackOnHTTP3 bool, err error) (fallback bool) {
 	if fallbackOnHTTP3 {
 		return isHTTP3FallbackError(err)
@@ -145,6 +227,15 @@ func shouldFallback(fallbackOnHTTP3 bool, err error) (fallback bool) {
 	return isHTTP1BrokenTransportError(err)
 }
 
+// isHTTP3FallbackError reports whether err is an HTTP/3 failure worth
+// resending on HTTP/2 or HTTP/1.1: anything except caller cancellation and
+// the permanent failures [isPermanentTransportError] recognizes.
+//
+// Parameters:
+//   - err (error): the failure to classify.
+//
+// Returns:
+//   - fallback (bool): true when a resend may succeed.
 func isHTTP3FallbackError(err error) (fallback bool) {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -153,8 +244,19 @@ func isHTTP3FallbackError(err error) (fallback bool) {
 	return !isPermanentTransportError(err)
 }
 
+// http3FailureSweepInterval is the number of failure-cache writes between
+// sweeps of expired entries.
 const http3FailureSweepInterval = 64
 
+// http3RecentlyFailed reports whether host sits in the HTTP/3 failure cache.
+// An expired entry is evicted on lookup and counts as absent. The cache is
+// disabled when [WithHTTP3FallbackTTL] is zero.
+//
+// Parameters:
+//   - host (string): the request host (with port).
+//
+// Returns:
+//   - failed (bool): true while the host's failure is fresh.
 func (c *Client) http3RecentlyFailed(host string) (failed bool) {
 	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
 		return false
@@ -175,6 +277,11 @@ func (c *Client) http3RecentlyFailed(host string) (failed bool) {
 	return true
 }
 
+// recordHTTP3Failure stamps host into the HTTP/3 failure cache, sweeping
+// expired entries every http3FailureSweepInterval writes.
+//
+// Parameters:
+//   - host (string): the failed host (with port).
 func (c *Client) recordHTTP3Failure(host string) {
 	if c.config.HTTP3FallbackTTL <= 0 || host == "" {
 		return
@@ -187,6 +294,8 @@ func (c *Client) recordHTTP3Failure(host string) {
 	}
 }
 
+// pruneHTTP3Failures evicts every expired entry from the HTTP/3 failure
+// cache.
 func (c *Client) pruneHTTP3Failures() {
 	ttl := c.config.HTTP3FallbackTTL
 	if ttl <= 0 {
@@ -203,12 +312,27 @@ func (c *Client) pruneHTTP3Failures() {
 	})
 }
 
+// clearHTTP3Failure drops host from the HTTP/3 failure cache after a
+// successful HTTP/3 exchange.
+//
+// Parameters:
+//   - host (string): the recovered host (with port).
 func (c *Client) clearHTTP3Failure(host string) {
 	if host != "" {
 		c.http3Failures.Delete(host)
 	}
 }
 
+// sameRoundTripper reports whether a and b are the same transport value, so
+// [Client.CloseIdleConnections] does not close a shared pool twice.
+// Incomparable implementations (a transport wrapping a map, say) never match.
+//
+// Parameters:
+//   - a (http.RoundTripper): the primary transport, or nil.
+//   - b (http.RoundTripper): the fallback transport, or nil.
+//
+// Returns:
+//   - same (bool): true when both transports are the same comparable value.
 func sameRoundTripper(a, b http.RoundTripper) (same bool) {
 	if a == nil || b == nil {
 		return a == nil && b == nil

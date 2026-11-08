@@ -130,8 +130,7 @@ func (r *ReusableReadCloser) Close() (err error) {
 var ErrUnsupportedBodyType = errors.New("unsupported body type")
 
 // ErrBodyTooLarge reports a request body that exceeds the configured buffering
-// limit. It is returned by [NewReusableReadCloserLimited] and
-// [NewLimited].
+// limit. It is returned by [NewReusableReadCloserLimited].
 var ErrBodyTooLarge = errors.New("request body exceeds the configured limit")
 
 // NewReusableReadCloser creates a new instance of ReusableReadCloser from a variety of input data types.

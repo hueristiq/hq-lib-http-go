@@ -93,8 +93,6 @@ func TestCanonicalizeHeaderKey_MatchesTextproto(t *testing.T) {
 	}
 }
 
-// FuzzCanonicalizeHeaderKey exercises the canonicalizer over arbitrary
-// inputs: no input may panic, and the result must be idempotent.
 func FuzzCanonicalizeHeaderKey(f *testing.F) {
 	f.Add("Content-Type")
 	f.Add("x-forwarded-for")

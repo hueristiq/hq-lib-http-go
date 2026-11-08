@@ -32,6 +32,10 @@ const (
 )
 
 // String returns the protocol name.
+//
+// Returns:
+//   - protocol (string): "auto", "auto-http3", "http/1.1", "http/2", "http/3",
+//     or "unknown".
 func (p Protocol) String() (protocol string) {
 	switch p {
 	case ProtocolAuto:

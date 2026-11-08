@@ -69,8 +69,6 @@ func TestReusableReadCloser_ZeroValueReset(t *testing.T) {
 	assert.Empty(t, data)
 }
 
-// valueReader implements io.Reader as a value type, so its reflect kind is not
-// nilable.
 type valueReader struct{}
 
 func (valueReader) Read([]byte) (int, error) {

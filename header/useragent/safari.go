@@ -2,6 +2,10 @@ package useragent
 
 // safariDesktopRelease pairs a Safari version with the macOS releases that
 // support it.
+//
+// Fields:
+//   - version (string): the Safari version.
+//   - macOS ([]string): the macOS platform tokens that run the release.
 type safariDesktopRelease struct {
 	version string
 	macOS   []string

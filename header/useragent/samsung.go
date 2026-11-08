@@ -6,6 +6,10 @@ import (
 
 // samsungInternetRelease pairs a Samsung Internet version with the Chromium
 // version it ships.
+//
+// Fields:
+//   - chromium (string): the Chromium major version.
+//   - version (string): the Samsung Internet version.
 type samsungInternetRelease struct {
 	chromium string
 	version  string

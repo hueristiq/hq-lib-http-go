@@ -259,56 +259,22 @@ func TestReusableReadCloser_ConcurrentRead(t *testing.T) {
 		"Expected concurrent readers to consume the payload exactly once")
 }
 
-// customReadSeeker implements io.ReadSeeker without being one of the concrete
-// reader types NewReusableReadCloser special-cases.
-//
-// Fields:
-//   - Reader (*bytes.Reader): the underlying seekable reader.
 type customReadSeeker struct {
 	Reader *bytes.Reader
 }
 
-// Read delegates to the underlying reader.
-//
-// Parameters:
-//   - p ([]byte): the destination buffer.
-//
-// Returns:
-//   - n (int): the number of bytes read.
-//   - err (error): non-nil when the read fails.
 func (r customReadSeeker) Read(p []byte) (n int, err error) {
 	return r.Reader.Read(p)
 }
 
-// Seek delegates to the underlying reader.
-//
-// Parameters:
-//   - offset (int64): the seek offset.
-//   - whence (int): the seek origin.
-//
-// Returns:
-//   - position (int64): the new offset.
-//   - err (error): non-nil when the seek fails.
 func (r customReadSeeker) Seek(offset int64, whence int) (position int64, err error) {
 	return r.Reader.Seek(offset, whence)
 }
 
-// customReader implements io.Reader without matching a more specific type.
-//
-// Fields:
-//   - Reader (io.Reader): the underlying reader.
 type customReader struct {
 	Reader io.Reader
 }
 
-// Read delegates to the underlying reader.
-//
-// Parameters:
-//   - p ([]byte): the destination buffer.
-//
-// Returns:
-//   - n (int): the number of bytes read.
-//   - err (error): non-nil when the read fails.
 func (r customReader) Read(p []byte) (n int, err error) {
 	return r.Reader.Read(p)
 }

@@ -2,6 +2,10 @@ package useragent
 
 // operaDesktopRelease pairs a desktop Opera major version with the Chromium
 // version it ships.
+//
+// Fields:
+//   - chromium (string): the Chromium major version.
+//   - opera (string): the Opera major version.
 type operaDesktopRelease struct {
 	chromium string
 	opera    string
@@ -21,6 +25,10 @@ var operaDesktopReleases = []operaDesktopRelease{
 
 // operaAndroidRelease pairs an Opera for Android version with the Chromium
 // version it ships.
+//
+// Fields:
+//   - chromium (string): the Chromium major version.
+//   - opera (string): the Opera for Android version.
 type operaAndroidRelease struct {
 	chromium string
 	opera    string

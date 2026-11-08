@@ -27,7 +27,10 @@ type Options struct {
 }
 
 // OptionFunc configures a User-Agent draw or listing. The zero value of a filter
-// means no constraint.
+// means no constraint. A nil OptionFunc is ignored.
+//
+// Parameters:
+//   - opts (*Options): the filters under construction.
 type OptionFunc func(*Options)
 
 // filterKey identifies one combination of browser and platform filters.

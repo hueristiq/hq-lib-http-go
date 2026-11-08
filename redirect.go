@@ -8,6 +8,14 @@ import (
 // StripSensitiveHeadersOnRedirect returns a redirect policy that removes keys
 // after a host change or an HTTPS-to-HTTP downgrade. It checks every hop so a
 // later same-host redirect cannot restore a header stripped earlier.
+//
+// Parameters:
+//   - keys (...string): the header names to strip; empty names are ignored.
+//
+// Returns:
+//   - checkRedirect (func(req *http.Request, via []*http.Request) error): a
+//     policy suitable for [WithCheckRedirect] or http.Client.CheckRedirect; it
+//     always returns a nil error.
 func StripSensitiveHeadersOnRedirect(keys ...string) (checkRedirect func(req *http.Request, via []*http.Request) error) {
 	return func(req *http.Request, via []*http.Request) (err error) {
 		if len(via) == 0 || req.URL == nil {

@@ -26,6 +26,10 @@ var desktopOS = []string{
 
 // androidDevice is an Android device profile and the Android releases it
 // plausibly runs.
+//
+// Fields:
+//   - name (string): the device name or model number.
+//   - versions ([]string): the Android major releases the device runs.
 type androidDevice struct {
 	name     string
 	versions []string
@@ -52,6 +56,11 @@ var androidDevices = []androidDevice{
 }
 
 // iosDevice is an iOS device profile and the iOS releases it plausibly runs.
+//
+// Fields:
+//   - name (string): the device name, such as "iPhone" or an iPad model.
+//   - tablet (bool): whether the device renders the tablet platform token.
+//   - versions ([]string): the iOS version tokens the device runs.
 type iosDevice struct {
 	name     string
 	tablet   bool

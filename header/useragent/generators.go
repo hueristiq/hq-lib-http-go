@@ -5,6 +5,11 @@ import (
 )
 
 // generator produces every User-Agent value for one browser and platform.
+//
+// Fields:
+//   - browser (Browser): the browser family the values advertise.
+//   - platform (Platform): the platform the values advertise.
+//   - all (func() []string): renders every User-Agent value for the pair.
 type generator struct {
 	browser  Browser
 	platform Platform

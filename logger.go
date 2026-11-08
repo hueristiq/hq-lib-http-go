@@ -5,12 +5,53 @@ import (
 	"time"
 )
 
-// Logger is the minimal logging surface used by the client. It is satisfied by
-// [log/slog.Logger]. A nil Logger disables logging.
+// Logger defines the contract for the structured logging surface used by a
+// [Client].
+//
+// Implementations provide the four leveled methods of a structured logger,
+// accepting a message and an alternating sequence of key/value pairs. The
+// interface is satisfied by [log/slog.Logger] and by the standard
+// [log.Logger] adapters that expose the same shape, so applications can plug
+// their existing logger without an adapter of their own. The client never
+// inspects the logger beyond calling these methods; which levels it emits at
+// is part of the client's documented behavior, not of this contract.
+//
+// A nil Logger is valid and means logging is disabled: the client checks for
+// nil before every call, so implementations do not need a nil-receiver path
+// and tests can pass nil to silence output. Implementations shared across
+// clients or goroutines must be safe for concurrent use, because the client
+// logs from the goroutine running each attempt and from the retry hook.
+// [WithLogger] and [WithRequestLogger] install one at client and request scope
+// respectively.
 type Logger interface {
+	// Debug logs a diagnostic event, such as the outgoing request line and
+	// the attempt outcome.
+	//
+	// Parameters:
+	//   - msg (string): the message text.
+	//   - args (...any): alternating keys and values attached to the record.
 	Debug(msg string, args ...any)
+
+	// Info logs an informational event.
+	//
+	// Parameters:
+	//   - msg (string): the message text.
+	//   - args (...any): alternating keys and values attached to the record.
 	Info(msg string, args ...any)
+
+	// Warn logs a recoverable problem, such as an attempt that will be
+	// retried.
+	//
+	// Parameters:
+	//   - msg (string): the message text.
+	//   - args (...any): alternating keys and values attached to the record.
 	Warn(msg string, args ...any)
+
+	// Error logs a terminal failure that ends an execution.
+	//
+	// Parameters:
+	//   - msg (string): the message text.
+	//   - args (...any): alternating keys and values attached to the record.
 	Error(msg string, args ...any)
 }
 

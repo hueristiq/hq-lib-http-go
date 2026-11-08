@@ -8,6 +8,20 @@ import (
 	"time"
 )
 
+// doAttempt runs one attempt: it waits on the rate limiter, arms the
+// per-attempt timeout, fires the prepare hook and the [OnRequestFunc]
+// callback, performs the round trip (with protocol fallback), records the
+// outcome, and asks the retry policy whether to continue. A retryable outcome
+// is wrapped in a [retryableError] for the engine; a body that cannot be
+// replayed is a final marker.
+//
+// Parameters:
+//   - ctx (context.Context): the execution context.
+//
+// Returns:
+//   - res (*http.Response): the attempt response, or nil.
+//   - err (error): nil for a terminal success, the policy's abort error, or a
+//     [retryableError] marker wrapping the retryable outcome.
 func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err error) {
 	e.retryAfter, e.retryAfterSet = 0, false
 
@@ -117,6 +131,18 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 	return res, &retryableError{err: err, resp: res, attempt: e.attempt}
 }
 
+// roundTrip performs the attempt's exchange on the primary client, keeps the
+// HTTP/3 failure cache current, and resends on the fallback client when the
+// primary failure qualifies and the request may be repeated. A joined error
+// reports both failures when the fallback also fails.
+//
+// Parameters:
+//   - req (*http.Request): the attempt request.
+//
+// Returns:
+//   - res (*http.Response): the response, or nil.
+//   - err (error): the primary failure, or both failures joined after a
+//     failed resend.
 func (e *execution) roundTrip(req *http.Request) (res *http.Response, err error) {
 	res, err = e.primary.Do(req)
 
@@ -149,6 +175,13 @@ func (e *execution) roundTrip(req *http.Request) (res *http.Response, err error)
 	return res, err
 }
 
+// recordAttempt fires the [OnResponseFunc] callback, logs the outcome, and
+// appends the attempt to the execution history used by [RetryError].
+//
+// Parameters:
+//   - req (*http.Request): the attempt request.
+//   - res (*http.Response): the attempt response, or nil.
+//   - err (error): the attempt's transport error, or nil.
 func (e *execution) recordAttempt(req *http.Request, res *http.Response, err error) {
 	if e.opts.OnResponse != nil {
 		e.opts.OnResponse(ResponseEvent{
