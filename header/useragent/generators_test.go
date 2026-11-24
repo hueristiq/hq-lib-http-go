@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	hqgohttpuseragent "github.com/hueristiq/hq-lib-http-go/header/useragent"
+	hqgohttpheaderuseragent "github.com/hueristiq/hq-lib-http-go/header/useragent"
 )
 
 func TestGenerators_Formats(t *testing.T) {
@@ -16,16 +16,16 @@ func TestGenerators_Formats(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		options    []hqgohttpuseragent.OptionFunc
+		options    []hqgohttpheaderuseragent.OptionFunc
 		patterns   []string
 		contains   []string
 		notContain []string
 	}{
 		{
 			name: "chrome desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserChrome),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \(.+\) AppleWebKit/537\.36 \(KHTML, like Gecko\) Chrome/\d+\.\d+\.\d+\.\d+ Safari/537\.36$`,
@@ -35,9 +35,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "chrome mobile",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserChrome),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserChrome),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \(Linux; Android \d+; .+\) AppleWebKit/537\.36 \(KHTML, like Gecko\) Chrome/\d+\.\d+\.\d+\.\d+ Mobile Safari/537\.36$`,
@@ -46,9 +46,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "firefox desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserFirefox),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserFirefox),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \(.+; rv:\d+\.\d+\) Gecko/20100101 Firefox/\d+\.\d+$`,
@@ -58,9 +58,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "firefox mobile",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserFirefox),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserFirefox),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \(Android \d+; Mobile; rv:\d+\.\d+\) Gecko/\d+\.\d+ Firefox/\d+\.\d+$`,
@@ -69,9 +69,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "safari desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSafari),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserSafari),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \(Macintosh; [^)]+\) AppleWebKit/605\.1\.15 \(KHTML, like Gecko\) Version/\d+\.\d+ Safari/605\.1\.15$`,
@@ -81,9 +81,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "safari ios",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSafari),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserSafari),
 			},
 			patterns: []string{
 				`^Mozilla/5\.0 \((iPhone|iPad).*; CPU (iPhone )?OS \d+_\d+ like Mac OS X\) AppleWebKit/605\.1\.15 \(KHTML, like Gecko\) Version/\d+\.\d+ Mobile/15E148 Safari/604\.1$`,
@@ -92,9 +92,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "edge desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserEdge),
 			},
 			patterns: []string{
 				`Chrome/\d+\.0\.0\.0 Safari/537\.36 Edg/\d+\.0\.0\.0$`,
@@ -104,9 +104,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "edge mobile",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserEdge),
 			},
 			patterns: []string{
 				`Chrome/\d+\.0\.0\.0 Mobile Safari/537\.36 EdgA/\d+\.0\.0\.0$`,
@@ -115,9 +115,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "opera desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserOpera),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserOpera),
 			},
 			patterns: []string{
 				`Chrome/\d+\.0\.0\.0 Safari/537\.36 OPR/\d+\.0\.0\.0$`,
@@ -127,9 +127,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "opera mobile",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserOpera),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserOpera),
 			},
 			patterns: []string{
 				`Chrome/\d+\.0\.0\.0 Mobile Safari/537\.36 OPR/\d+\.\d+\.\d+\.\d+$`,
@@ -138,9 +138,9 @@ func TestGenerators_Formats(t *testing.T) {
 		},
 		{
 			name: "samsung internet android",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserSamsungInternet),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserSamsungInternet),
 			},
 			patterns: []string{
 				`SamsungBrowser/\d+\.\d+\.\d+\.\d+ Chrome/\d+\.0\.0\.0 Mobile Safari/537\.36$`,
@@ -153,7 +153,7 @@ func TestGenerators_Formats(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			userAgents := hqgohttpuseragent.List(test.options...)
+			userAgents := hqgohttpheaderuseragent.List(test.options...)
 
 			require.NotEmpty(t, userAgents)
 
@@ -191,17 +191,17 @@ func TestGenerators_Formats(t *testing.T) {
 func TestGenerators_Coverage(t *testing.T) {
 	t.Parallel()
 
-	browsers := []hqgohttpuseragent.Browser{
-		hqgohttpuseragent.BrowserChrome,
-		hqgohttpuseragent.BrowserFirefox,
-		hqgohttpuseragent.BrowserSafari,
-		hqgohttpuseragent.BrowserEdge,
-		hqgohttpuseragent.BrowserOpera,
-		hqgohttpuseragent.BrowserSamsungInternet,
+	browsers := []hqgohttpheaderuseragent.Browser{
+		hqgohttpheaderuseragent.BrowserChrome,
+		hqgohttpheaderuseragent.BrowserFirefox,
+		hqgohttpheaderuseragent.BrowserSafari,
+		hqgohttpheaderuseragent.BrowserEdge,
+		hqgohttpheaderuseragent.BrowserOpera,
+		hqgohttpheaderuseragent.BrowserSamsungInternet,
 	}
-	platforms := []hqgohttpuseragent.Platform{
-		hqgohttpuseragent.PlatformDesktop,
-		hqgohttpuseragent.PlatformMobile,
+	platforms := []hqgohttpheaderuseragent.Platform{
+		hqgohttpheaderuseragent.PlatformDesktop,
+		hqgohttpheaderuseragent.PlatformMobile,
 	}
 
 	for _, browser := range browsers {
@@ -211,12 +211,12 @@ func TestGenerators_Coverage(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				userAgents := hqgohttpuseragent.List(
-					hqgohttpuseragent.WithBrowser(browser),
-					hqgohttpuseragent.WithPlatform(platform),
+				userAgents := hqgohttpheaderuseragent.List(
+					hqgohttpheaderuseragent.WithBrowser(browser),
+					hqgohttpheaderuseragent.WithPlatform(platform),
 				)
 
-				if browser == hqgohttpuseragent.BrowserSamsungInternet && platform == hqgohttpuseragent.PlatformDesktop {
+				if browser == hqgohttpheaderuseragent.BrowserSamsungInternet && platform == hqgohttpheaderuseragent.PlatformDesktop {
 					assert.Empty(t, userAgents)
 
 					return
@@ -233,22 +233,22 @@ func TestGenerators_VendorVersionAlignment(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		options []hqgohttpuseragent.OptionFunc
+		options []hqgohttpheaderuseragent.OptionFunc
 		pattern string
 	}{
 		{
 			name: "edge desktop",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformDesktop),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformDesktop),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserEdge),
 			},
 			pattern: `Chrome/(\d+)\.0\.0\.0 Safari/537\.36 Edg/(\d+)\.0\.0\.0`,
 		},
 		{
 			name: "edge android",
-			options: []hqgohttpuseragent.OptionFunc{
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
-				hqgohttpuseragent.WithBrowser(hqgohttpuseragent.BrowserEdge),
+			options: []hqgohttpheaderuseragent.OptionFunc{
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
+				hqgohttpheaderuseragent.WithBrowser(hqgohttpheaderuseragent.BrowserEdge),
 			},
 			pattern: `Chrome/(\d+)\.0\.0\.0 Mobile Safari/537\.36 EdgA/(\d+)\.0\.0\.0`,
 		},
@@ -260,7 +260,7 @@ func TestGenerators_VendorVersionAlignment(t *testing.T) {
 
 			pattern := regexp.MustCompile(test.pattern)
 
-			for _, userAgent := range hqgohttpuseragent.List(test.options...) {
+			for _, userAgent := range hqgohttpheaderuseragent.List(test.options...) {
 				if strings.Contains(userAgent, "EdgiOS/") {
 					continue
 				}
@@ -279,22 +279,22 @@ func TestGenerators_VendorVersionAlignment(t *testing.T) {
 func TestGenerators_MobileValuesContainMobileToken(t *testing.T) {
 	t.Parallel()
 
-	browsers := []hqgohttpuseragent.Browser{
-		hqgohttpuseragent.BrowserChrome,
-		hqgohttpuseragent.BrowserFirefox,
-		hqgohttpuseragent.BrowserSafari,
-		hqgohttpuseragent.BrowserEdge,
-		hqgohttpuseragent.BrowserOpera,
-		hqgohttpuseragent.BrowserSamsungInternet,
+	browsers := []hqgohttpheaderuseragent.Browser{
+		hqgohttpheaderuseragent.BrowserChrome,
+		hqgohttpheaderuseragent.BrowserFirefox,
+		hqgohttpheaderuseragent.BrowserSafari,
+		hqgohttpheaderuseragent.BrowserEdge,
+		hqgohttpheaderuseragent.BrowserOpera,
+		hqgohttpheaderuseragent.BrowserSamsungInternet,
 	}
 
 	for _, browser := range browsers {
 		t.Run(browser.String(), func(t *testing.T) {
 			t.Parallel()
 
-			for _, userAgent := range hqgohttpuseragent.List(
-				hqgohttpuseragent.WithBrowser(browser),
-				hqgohttpuseragent.WithPlatform(hqgohttpuseragent.PlatformMobile),
+			for _, userAgent := range hqgohttpheaderuseragent.List(
+				hqgohttpheaderuseragent.WithBrowser(browser),
+				hqgohttpheaderuseragent.WithPlatform(hqgohttpheaderuseragent.PlatformMobile),
 			) {
 				assert.True(t, strings.Contains(userAgent, "Mobile") || strings.Contains(userAgent, "Android"),
 					"Expected %q to advertise a mobile platform", userAgent)

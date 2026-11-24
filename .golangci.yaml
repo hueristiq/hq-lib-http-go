@@ -122,9 +122,9 @@ linters:
                 - pkg: github.com/hueristiq/hq-lib-http-go/header
                   alias: hqgohttpheader
                 - pkg: github.com/hueristiq/hq-lib-http-go/header/link
-                  alias: hqgohttplink
+                  alias: hqgohttpheaderlink
                 - pkg: github.com/hueristiq/hq-lib-http-go/header/useragent
-                  alias: hqgohttpuseragent
+                  alias: hqgohttpheaderuseragent
                 - pkg: github.com/hueristiq/hq-lib-http-go/method
                   alias: hqgohttpmethod
                 - pkg: github.com/hueristiq/hq-lib-http-go/mime
@@ -148,6 +148,11 @@ linters:
                 - whyNoLint
         gocyclo:
             min-complexity: 10
+        revive:
+            enable-default-rules: true
+            rules:
+                - name: time-naming
+                  disabled: true
         testpackage:
             skip-regexp: '(_internal|_bench|_fuzz)_test\.go$'
         whitespace:

@@ -7,13 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	hqgohttplink "github.com/hueristiq/hq-lib-http-go/header/link"
+	hqgohttpheaderlink "github.com/hueristiq/hq-lib-http-go/header/link"
 )
 
 func TestWebLink_String(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com",
 		Rel: "next",
 		Params: map[string]string{
@@ -31,7 +31,7 @@ func TestWebLink_String(t *testing.T) {
 func TestWebLink_String_EmptyRelAndParams(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL:    "http://example.com",
 		Rel:    "",
 		Params: map[string]string{},
@@ -45,7 +45,7 @@ func TestWebLink_String_EmptyRelAndParams(t *testing.T) {
 func TestWebLink_HasParam(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com",
 		Params: map[string]string{
 			"foo": "bar",
@@ -59,7 +59,7 @@ func TestWebLink_HasParam(t *testing.T) {
 func TestWebLink_Param(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com",
 		Params: map[string]string{
 			"foo": "bar",
@@ -73,7 +73,7 @@ func TestWebLink_Param(t *testing.T) {
 func TestWebLinks_String(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.WebLinks{
+	links := hqgohttpheaderlink.WebLinks{
 		{
 			URL: "http://example.com",
 			Rel: "next",
@@ -104,7 +104,7 @@ func TestWebLinks_String(t *testing.T) {
 func TestWebLinks_String_Empty(t *testing.T) {
 	t.Parallel()
 
-	var links hqgohttplink.WebLinks
+	var links hqgohttpheaderlink.WebLinks
 
 	assert.Empty(t, links.String())
 }
@@ -112,7 +112,7 @@ func TestWebLinks_String_Empty(t *testing.T) {
 func TestWebLinks_FilterByRel(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.WebLinks{
+	links := hqgohttpheaderlink.WebLinks{
 		{
 			URL: "http://example.com/next",
 			Rel: "next",
@@ -142,17 +142,17 @@ func TestParse(t *testing.T) {
 	tests := []struct {
 		name     string
 		raw      string
-		expected hqgohttplink.WebLinks
+		expected hqgohttpheaderlink.WebLinks
 	}{
 		{
 			name:     "empty",
 			raw:      "",
-			expected: hqgohttplink.WebLinks{},
+			expected: hqgohttpheaderlink.WebLinks{},
 		},
 		{
 			name: "single link",
 			raw:  `<http://example.com>; rel="next"; foo="bar"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -163,7 +163,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "multiple links",
 			raw:  `<http://example.com>; rel="next"; foo="bar", <http://example.org>; rel="prev"; baz="qux"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -179,7 +179,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "comma inside URL",
 			raw:  `<http://example.com/a,b?x=1,y=2>; rel="next", <http://example.org/z>; rel="prev"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com/a,b?x=1,y=2",
 					Rel:    "next",
@@ -195,7 +195,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "unquoted values",
 			raw:  `<http://example.com>; rel=next; type=text/html`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -206,7 +206,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "rel key is matched case-insensitively",
 			raw:  `<http://example.com>; REL="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -217,7 +217,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "parameter keys are kept as written",
 			raw:  `<http://example.com>; rel="next"; Title="Next Page"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -228,7 +228,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "parameter without value",
 			raw:  `<http://example.com>; rel="next"; hreflang`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -239,7 +239,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "whitespace around separators",
 			raw:  "  <http://example.com>  ;  rel=\"next\"  ,  <http://example.org>  ;  rel=\"prev\"  ",
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -255,7 +255,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "entries without a URL are skipped",
 			raw:  `rel="next", <http://example.com>; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -266,22 +266,22 @@ func TestParse(t *testing.T) {
 		{
 			name:     "only invalid entries",
 			raw:      `rel="next"`,
-			expected: hqgohttplink.WebLinks{},
+			expected: hqgohttpheaderlink.WebLinks{},
 		},
 		{
 			name:     "blank header",
 			raw:      "   ",
-			expected: hqgohttplink.WebLinks{},
+			expected: hqgohttpheaderlink.WebLinks{},
 		},
 		{
 			name:     "empty entries",
 			raw:      ",,",
-			expected: hqgohttplink.WebLinks{},
+			expected: hqgohttpheaderlink.WebLinks{},
 		},
 		{
 			name: "empty parameters are skipped",
 			raw:  `<http://example.com>;;rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -292,7 +292,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "parameters without a key are skipped",
 			raw:  `<http://example.com>; =value`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "",
@@ -303,7 +303,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "comma inside a quoted value",
 			raw:  `<http://example.com>; title="a,b"; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -314,7 +314,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "semicolon inside a quoted value",
 			raw:  `<http://example.com>; title="a;b"; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -325,7 +325,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "semicolon inside the URL",
 			raw:  `<http://example.com/a;b>; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com/a;b",
 					Rel:    "next",
@@ -336,7 +336,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "escaped quotes and backslashes",
 			raw:  `<http://example.com>; title="a \"quoted\" \\ value"; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -347,7 +347,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "quoted comma separates multiple entries correctly",
 			raw:  `<http://example.com>; title="a,b"; rel="next", <http://example.org>; rel="prev"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -363,7 +363,7 @@ func TestParse(t *testing.T) {
 		{
 			name: "equals sign inside a quoted value",
 			raw:  `<http://example.com>; title="a=b"; rel="next"`,
-			expected: hqgohttplink.WebLinks{
+			expected: hqgohttpheaderlink.WebLinks{
 				{
 					URL:    "http://example.com",
 					Rel:    "next",
@@ -377,7 +377,7 @@ func TestParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			links := hqgohttplink.Parse(tt.raw)
+			links := hqgohttpheaderlink.Parse(tt.raw)
 
 			assert.Equal(t, tt.expected, links)
 		})
@@ -392,7 +392,7 @@ func TestParseMultiple(t *testing.T) {
 		`<http://example.org>; rel="prev"; baz="qux"`,
 	}
 
-	links := hqgohttplink.ParseMultiple(headers)
+	links := hqgohttpheaderlink.ParseMultiple(headers)
 
 	require.Len(t, links, 2)
 
@@ -407,7 +407,7 @@ func TestParseMultiple(t *testing.T) {
 func TestWebLink_RoundTripQuotedValues(t *testing.T) {
 	t.Parallel()
 
-	original := hqgohttplink.WebLink{
+	original := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com/a;b",
 		Rel: "next",
 		Params: map[string]string{
@@ -415,7 +415,7 @@ func TestWebLink_RoundTripQuotedValues(t *testing.T) {
 		},
 	}
 
-	links := hqgohttplink.Parse(original.String())
+	links := hqgohttpheaderlink.Parse(original.String())
 
 	require.Len(t, links, 1)
 	assert.Equal(t, original, links[0])
@@ -424,7 +424,7 @@ func TestWebLink_RoundTripQuotedValues(t *testing.T) {
 func TestWebLink_String_DoesNotDoubleRel(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com",
 		Rel: "next",
 		Params: map[string]string{
@@ -441,7 +441,7 @@ func TestWebLink_String_DoesNotDoubleRel(t *testing.T) {
 func TestWebLink_String_PreservesTabs(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL: "http://example.com",
 		Params: map[string]string{
 			"title": "a\tb",
@@ -452,7 +452,7 @@ func TestWebLink_String_PreservesTabs(t *testing.T) {
 
 	assert.Contains(t, str, "title=\"a\tb\"")
 
-	links := hqgohttplink.Parse(str)
+	links := hqgohttpheaderlink.Parse(str)
 
 	require.Len(t, links, 1)
 	assert.Equal(t, "a\tb", links[0].Param("title"))
@@ -461,7 +461,7 @@ func TestWebLink_String_PreservesTabs(t *testing.T) {
 func TestWebLinks_FilterByRel_CaseInsensitiveAndTokens(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.WebLinks{
+	links := hqgohttpheaderlink.WebLinks{
 		{URL: "http://example.com/a", Rel: "Next"},
 		{URL: "http://example.com/b", Rel: "next prev"},
 		{URL: "http://example.com/c", Rel: "prev"},
@@ -476,7 +476,7 @@ func TestWebLinks_FilterByRel_CaseInsensitiveAndTokens(t *testing.T) {
 func TestParse_RepeatedParametersKeepFirst(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.Parse(`<http://example.com>; rel="next"; rel="prev"; title="first"; title="second"`)
+	links := hqgohttpheaderlink.Parse(`<http://example.com>; rel="next"; rel="prev"; title="first"; title="second"`)
 
 	require.Len(t, links, 1)
 	assert.Equal(t, "next", links[0].Rel)
@@ -486,7 +486,7 @@ func TestParse_RepeatedParametersKeepFirst(t *testing.T) {
 func TestWebLink_ParamCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		Rel:    "next",
 		Params: map[string]string{"Title": "Next Page"},
 	}
@@ -500,7 +500,7 @@ func TestWebLink_ParamCaseInsensitive(t *testing.T) {
 func TestParse_EmptyURIReference(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.Parse(`<>; rel="self"`)
+	links := hqgohttpheaderlink.Parse(`<>; rel="self"`)
 
 	require.Len(t, links, 1)
 	assert.Empty(t, links[0].URL)
@@ -510,7 +510,7 @@ func TestParse_EmptyURIReference(t *testing.T) {
 func TestParse_CaseInsensitiveParameters(t *testing.T) {
 	t.Parallel()
 
-	links := hqgohttplink.Parse(`<https://example.com>; Title="first"; title="second"`)
+	links := hqgohttpheaderlink.Parse(`<https://example.com>; Title="first"; title="second"`)
 
 	require.Len(t, links, 1)
 	assert.Equal(t, "first", links[0].Param("title"))
@@ -521,7 +521,7 @@ func TestParse_CaseInsensitiveParameters(t *testing.T) {
 func TestWebLink_StringSanitizesCRLF(t *testing.T) {
 	t.Parallel()
 
-	link := hqgohttplink.WebLink{
+	link := hqgohttpheaderlink.WebLink{
 		URL:    "https://example.com/\r\nInjected: yes",
 		Rel:    "next\r\n",
 		Params: map[string]string{"title": "a\r\nb"},
