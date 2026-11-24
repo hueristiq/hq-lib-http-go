@@ -1,4 +1,4 @@
-package http
+package httpclient
 
 import (
 	"net/http"
@@ -8,25 +8,6 @@ import (
 
 // RequestOptions holds per-request execution overrides. Use the WithRequest
 // options with [Client.Do] instead of constructing this type directly.
-//
-// Fields:
-//   - AttemptTimeout (time.Duration): per-attempt bound through response
-//     headers; zero disables it.
-//   - RetryMaxAttempts (int): total attempt count, including the first.
-//   - Logger (Logger): the logger for this execution; nil disables logging.
-//   - RetryPolicy (RetryPolicy): the retry predicate; nil selects
-//     [DefaultRetryPolicy].
-//   - RateLimiter (RateLimiter): the limiter waited on before each attempt.
-//   - OnRequest (OnRequestFunc): callback run before each attempt.
-//   - OnResponse (OnResponseFunc): callback run after each attempt and before
-//     the retry decision; must not consume the response body.
-//   - OnRetry (OnRetryFunc): callback run before each retry wait.
-//   - PrepareRetry (PrepareRetryFunc): hook run after the retry wait and
-//     before the next attempt.
-//   - IdempotentRetries (bool): whether retries are restricted to idempotent
-//     methods.
-//   - ResponseReadLimit (int64): cap on bytes drained from retried response
-//     bodies.
 type RequestOptions struct {
 	AttemptTimeout    time.Duration
 	RetryMaxAttempts  int
@@ -63,16 +44,9 @@ func (opts *RequestOptions) normalize() {
 }
 
 // RequestOptionFunc configures one request execution.
-//
-// Parameters:
-//   - opts (*RequestOptions): the options under construction.
 type RequestOptionFunc func(opts *RequestOptions)
 
 // HeaderField is one default HTTP header field.
-//
-// Fields:
-//   - Key (string): the header name, compared case-insensitively.
-//   - Value (string): the header value.
 type HeaderField struct {
 	Key   string
 	Value string
@@ -80,13 +54,6 @@ type HeaderField struct {
 
 // requestOptions builds the effective per-execution options: the client
 // configuration overlaid with the non-nil WithRequest overrides, normalized.
-//
-// Parameters:
-//   - ofs (...RequestOptionFunc): per-execution overrides; nil options are
-//     ignored.
-//
-// Returns:
-//   - opts (*RequestOptions): the effective execution options.
 func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *RequestOptions) {
 	opts = &RequestOptions{
 		AttemptTimeout:    c.config.AttemptTimeout,
@@ -115,12 +82,6 @@ func (c *Client) requestOptions(ofs ...RequestOptionFunc) (opts *RequestOptions)
 
 // isHostHeader reports whether key names the Host header, which lives on the
 // request rather than in its header map.
-//
-// Parameters:
-//   - key (string): the header name.
-//
-// Returns:
-//   - host (bool): true for "Host" in any casing.
 func isHostHeader(key string) (host bool) {
 	return strings.EqualFold(key, "Host")
 }
@@ -128,10 +89,6 @@ func isHostHeader(key string) (host bool) {
 // applyDefaultHeaders sets the client's default headers on req, skipping any
 // the request already carries. A default Host header lands on req.Host and
 // yields to an explicitly set host.
-//
-// Parameters:
-//   - req (*http.Request): the cloned execution request.
-//   - headers ([]HeaderField): the configured default headers.
 func applyDefaultHeaders(req *http.Request, headers []HeaderField) {
 	if len(headers) == 0 {
 		return
@@ -161,13 +118,6 @@ func applyDefaultHeaders(req *http.Request, headers []HeaderField) {
 
 // hasHeader reports whether header already carries key, compared
 // case-insensitively so a canonicalized and a raw name collide.
-//
-// Parameters:
-//   - header (http.Header): the request header map.
-//   - key (string): the header name to find.
-//
-// Returns:
-//   - found (bool): true when the header is present.
 func hasHeader(header http.Header, key string) (found bool) {
 	for existing := range header {
 		if strings.EqualFold(existing, key) {

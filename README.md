@@ -6,12 +6,10 @@
 
 ## Features
 
-- Standard `*http.Request` input and `*http.Response` output.
-- HTTP/1.1, HTTP/2, h2c fallback, and injected HTTP/3 clients.
-- Idempotent retries with `Retry-After`, typed transport failures, and attempt history.
-- Execution, attempt, and response-body timeouts.
-- Explicit rate-limiter, retry-policy, logger, callback, and transport seams.
-- No shared default client, global registration, or client-stored request context.
+- **Protocols:** HTTP/1.1, HTTP/2, h2c, and injected HTTP/3 clients.
+- **Retries:** idempotent retries honoring `Retry-After`, with typed failures and attempt history.
+- **Timeouts:** execution, attempt, and response-body bounds.
+- **Extension points:** rate limiter, retry policy, logger, callbacks, and transport.
 
 ## Installation
 

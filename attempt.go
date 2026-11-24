@@ -1,11 +1,11 @@
-package http
+package httpclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"time"
+
+	hqgoerrors "github.com/hueristiq/hq-lib-errors-go"
 )
 
 // doAttempt runs one attempt: it waits on the rate limiter, arms the
@@ -14,14 +14,6 @@ import (
 // outcome, and asks the retry policy whether to continue. A retryable outcome
 // is wrapped in a [retryableError] for the engine; a body that cannot be
 // replayed is a final marker.
-//
-// Parameters:
-//   - ctx (context.Context): the execution context.
-//
-// Returns:
-//   - res (*http.Response): the attempt response, or nil.
-//   - err (error): nil for a terminal success, the policy's abort error, or a
-//     [retryableError] marker wrapping the retryable outcome.
 func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err error) {
 	e.retryAfter, e.retryAfterSet = 0, false
 
@@ -31,7 +23,7 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 				return nil, cause
 			}
 
-			return nil, fmt.Errorf("http.Client.Do: waiting on rate limiter: %w", waitErr)
+			return nil, hqgoerrors.Wrap(waitErr, "waiting on rate limiter")
 		}
 	}
 
@@ -55,7 +47,7 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 
 	if e.attempt > 1 && e.opts.PrepareRetry != nil {
 		if prepareErr := e.opts.PrepareRetry(ctx, attemptReq, e.attempt); prepareErr != nil {
-			return nil, fmt.Errorf("http.Client.Do: preparing retry attempt %d: %w", e.attempt, prepareErr)
+			return nil, hqgoerrors.Wrapf(prepareErr, "preparing retry attempt %d", e.attempt)
 		}
 	}
 
@@ -101,7 +93,7 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 				return res, err
 			}
 
-			err = errors.Join(err, replayErr)
+			err = hqgoerrors.Join(err, replayErr)
 
 			marker := &retryableError{err: err, attempt: e.attempt, final: true}
 
@@ -122,9 +114,9 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 
 	if err == nil {
 		if res == nil {
-			err = errors.New("http.Client.Do: attempt returned no response and no error")
+			err = hqgoerrors.New("attempt returned no response and no error")
 		} else {
-			err = fmt.Errorf("http.Client.Do: retryable HTTP status %s", res.Status)
+			err = hqgoerrors.Errorf("retryable HTTP status %s", res.Status)
 		}
 	}
 
@@ -135,14 +127,6 @@ func (e *execution) doAttempt(ctx context.Context) (res *http.Response, err erro
 // HTTP/3 failure cache current, and resends on the fallback client when the
 // primary failure qualifies and the request may be repeated. A joined error
 // reports both failures when the fallback also fails.
-//
-// Parameters:
-//   - req (*http.Request): the attempt request.
-//
-// Returns:
-//   - res (*http.Response): the response, or nil.
-//   - err (error): the primary failure, or both failures joined after a
-//     failed resend.
 func (e *execution) roundTrip(req *http.Request) (res *http.Response, err error) {
 	res, err = e.primary.Do(req)
 
@@ -162,14 +146,14 @@ func (e *execution) roundTrip(req *http.Request) (res *http.Response, err error)
 	}
 
 	if rewindErr := rewindRequestBody(req); rewindErr != nil {
-		return res, errors.Join(err, rewindErr)
+		return res, hqgoerrors.Join(err, rewindErr)
 	}
 
 	primaryErr := err
 
 	res, err = e.fallback.Do(req)
 	if err != nil {
-		err = errors.Join(primaryErr, err)
+		err = hqgoerrors.Join(primaryErr, err)
 	}
 
 	return res, err
@@ -177,11 +161,6 @@ func (e *execution) roundTrip(req *http.Request) (res *http.Response, err error)
 
 // recordAttempt fires the [OnResponseFunc] callback, logs the outcome, and
 // appends the attempt to the execution history used by [RetryError].
-//
-// Parameters:
-//   - req (*http.Request): the attempt request.
-//   - res (*http.Response): the attempt response, or nil.
-//   - err (error): the attempt's transport error, or nil.
 func (e *execution) recordAttempt(req *http.Request, res *http.Response, err error) {
 	if e.opts.OnResponse != nil {
 		e.opts.OnResponse(ResponseEvent{

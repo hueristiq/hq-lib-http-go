@@ -16,12 +16,6 @@ import "strings"
 // becomes "Etag" and "WWW-Authenticate" becomes "Www-Authenticate". Header names
 // are case-insensitive on the wire, so this is safe for transport, but the
 // result can differ from the constants in this package.
-//
-// Parameters:
-//   - key (string): the input header key to canonicalize (e.g., "content-type", "ACCEPT-RANGES").
-//
-// Returns:
-//   - canonicalKey (string): the canonicalized header key (e.g., "Content-Type", "Accept-Ranges").
 func CanonicalizeHeaderKey(key string) (canonicalKey string) {
 	var b strings.Builder
 

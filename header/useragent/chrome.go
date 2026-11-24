@@ -21,9 +21,6 @@ var chromeVersions = []string{
 }
 
 // genChromeDesktop generates Chrome desktop User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genChromeDesktop() (userAgents []string) {
 	userAgents = make([]string, 0, len(chromeVersions)*len(desktopOS))
 
@@ -37,9 +34,6 @@ func genChromeDesktop() (userAgents []string) {
 }
 
 // genChromeAndroid generates Chrome for Android User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genChromeAndroid() (userAgents []string) {
 	userAgents = make([]string, 0, len(chromeVersions)*androidCombinationCount())
 
@@ -55,9 +49,6 @@ func genChromeAndroid() (userAgents []string) {
 }
 
 // genChromeIOS generates Chrome for iOS User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genChromeIOS() (userAgents []string) {
 	userAgents = make([]string, 0, len(chromeVersions)*iosCombinationCount())
 

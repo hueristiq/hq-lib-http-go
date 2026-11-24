@@ -22,9 +22,6 @@ var firefoxVersions = []string{
 }
 
 // genFirefoxDesktop generates Firefox desktop User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genFirefoxDesktop() (userAgents []string) {
 	userAgents = make([]string, 0, len(firefoxVersions)*len(desktopOS))
 
@@ -38,9 +35,6 @@ func genFirefoxDesktop() (userAgents []string) {
 }
 
 // genFirefoxAndroid generates Firefox for Android User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genFirefoxAndroid() (userAgents []string) {
 	userAgents = make([]string, 0, len(firefoxVersions)*androidCombinationCount())
 
@@ -56,9 +50,6 @@ func genFirefoxAndroid() (userAgents []string) {
 }
 
 // genFirefoxIOS generates Firefox for iOS User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genFirefoxIOS() (userAgents []string) {
 	userAgents = make([]string, 0, len(firefoxVersions)*iosCombinationCount())
 

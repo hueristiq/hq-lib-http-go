@@ -1,4 +1,4 @@
-package http
+package httpclient
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	hqgohttpmethod "github.com/hueristiq/hq-lib-http-go/method"
+	hqgoerrors "github.com/hueristiq/hq-lib-errors-go"
 )
 
 const (
@@ -33,12 +33,6 @@ const (
 // isMarkedRetryable reports whether err carries the retryable marker and is not
 // final, i.e. whether the retry engine should schedule another attempt. Errors
 // without the marker, and final markers, are returned to the caller unchanged.
-//
-// Parameters:
-//   - err (error): the failure to classify.
-//
-// Returns:
-//   - retry (bool): true when another attempt may follow.
 func isMarkedRetryable(err error) (retry bool) {
 	var marker *retryableError
 
@@ -55,17 +49,10 @@ func isMarkedRetryable(err error) (retry bool) {
 // when [WithRetryIdempotent] is enabled. GET, HEAD, OPTIONS, TRACE, PUT, and
 // DELETE are idempotent per [RFC 9110](https://www.rfc-editor.org/info/rfc9110/); QUERY is safe and idempotent per RFC
 // 10008.
-//
-// Parameters:
-//   - method (string): the HTTP method.
-//
-// Returns:
-//   - idempotent (bool): true for GET, HEAD, OPTIONS, TRACE, PUT, DELETE, and
-//     QUERY.
 func isIdempotentMethod(method string) (idempotent bool) {
 	switch strings.ToUpper(method) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace,
-		http.MethodPut, http.MethodDelete, hqgohttpmethod.QUERY.String():
+		http.MethodPut, http.MethodDelete, string(MethodQuery):
 		idempotent = true
 	default:
 		idempotent = false
@@ -84,13 +71,6 @@ func isIdempotentMethod(method string) (idempotent bool) {
 // wrapping an unexported badStringError, so no errors.As target exists;
 // matching the message is the only way to detect it. The check is isolated
 // here so the string match lives in exactly one place.
-//
-// Parameters:
-//   - err (error): the error to inspect.
-//
-// Returns:
-//   - broken (bool): true when the error indicates a broken HTTP/1.x
-//     transport connection.
 func isHTTP1BrokenTransportError(err error) (broken bool) {
 	if err == nil {
 		return false
@@ -106,25 +86,12 @@ func isHTTP1BrokenTransportError(err error) (broken bool) {
 
 // canReplayRequestBody reports whether req can be sent again through GetBody.
 // A nil or http.NoBody body needs no replay support.
-//
-// Parameters:
-//   - req (*http.Request): the request to inspect.
-//
-// Returns:
-//   - replayable (bool): true when the body can be rewound or is absent.
 func canReplayRequestBody(req *http.Request) (replayable bool) {
 	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 }
 
 // canResendRequest reports whether the protocol fallback may resend req:
 // idempotency first, then body replayability.
-//
-// Parameters:
-//   - req (*http.Request): the request to inspect.
-//   - idempotentOnly (bool): whether only idempotent methods may be resent.
-//
-// Returns:
-//   - resendable (bool): true when the fallback may resend the request.
 func canResendRequest(req *http.Request, idempotentOnly bool) (resendable bool) {
 	if idempotentOnly && !isIdempotentMethod(req.Method) {
 		return false
@@ -135,13 +102,6 @@ func canResendRequest(req *http.Request, idempotentOnly bool) (resendable bool) 
 
 // rewindRequestBody replaces a consumed body through req.GetBody so the
 // request can be sent again. A nil or http.NoBody body is a no-op.
-//
-// Parameters:
-//   - req (*http.Request): the request to rewind; mutated in place.
-//
-// Returns:
-//   - err (error): [ErrBodyNotReplayable] when no GetBody is available or it
-//     fails; nil otherwise.
 func rewindRequestBody(req *http.Request) (err error) {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil
@@ -153,7 +113,7 @@ func rewindRequestBody(req *http.Request) (err error) {
 
 	body, err := req.GetBody()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBodyNotReplayable, err)
+		return hqgoerrors.Join(ErrBodyNotReplayable, err)
 	}
 
 	req.Body = body
@@ -185,31 +145,10 @@ func rewindRequestBody(req *http.Request) (err error) {
 // A policy is invoked synchronously on the goroutine running the attempt and
 // must be safe for concurrent use across requests. A panicking policy
 // propagates its panic to the caller of the entry point.
-//
-// Parameters:
-//   - ctx (context.Context): the overall execution context, carrying
-//     cancellation signals and deadlines.
-//   - req (*http.Request): the attempt request. Its context may carry a
-//     per-attempt deadline when [WithAttemptTimeout] is set.
-//   - resp (*http.Response): the response received on the attempt, or nil.
-//   - err (error): the transport error of the attempt, or nil.
-//   - attempt (int): the 1-based attempt number.
-//
-// Returns:
-//   - retry (bool): true to schedule another attempt, false to stop.
-//   - rerr (error): an error replacing the attempt's outcome; non-nil stops
-//     retries even when retry is true.
 type RetryPolicy func(ctx context.Context, req *http.Request, resp *http.Response, err error, attempt int) (retry bool, rerr error)
 
 // isRedirectLimitError reports whether message is net/http's "stopped after
 // N redirects" error, which is unexported and therefore matched by shape.
-//
-// Parameters:
-//   - message (string): the error message to inspect.
-//
-// Returns:
-//   - match (bool): true when the message reports an exhausted redirect
-//     limit.
 func isRedirectLimitError(message string) (match bool) {
 	const (
 		prefix = "stopped after "
@@ -248,21 +187,6 @@ func isRedirectLimitError(message string) (match bool) {
 // The policy does not consider HTTP method idempotency: the client enforces
 // [WithRetryIdempotent], which is enabled by default, so POST and PATCH are
 // not retried unless the caller opts out.
-//
-// Parameters:
-//   - ctx (context.Context): the overall execution context, carrying
-//     cancellation signals and deadlines.
-//   - _ (*http.Request): accepted for the [RetryPolicy] signature; the default
-//     policy does not inspect the request.
-//   - resp (*http.Response): the response received on the attempt, or nil.
-//   - err (error): the transport error of the attempt, or nil.
-//   - _ (int): accepted for the [RetryPolicy] signature; the default policy
-//     does not inspect the attempt number.
-//
-// Returns:
-//   - retry (bool): true when another attempt is worthwhile.
-//   - rerr (error): the context's cause when the context is done; nil
-//     otherwise.
 func DefaultRetryPolicy(ctx context.Context, _ *http.Request, resp *http.Response, err error, _ int) (retry bool, rerr error) {
 	// Do not retry on context.Canceled or context.DeadlineExceeded: the caller
 	// is no longer waiting for an answer. Use the cause so a deadline enforced
@@ -320,12 +244,6 @@ func DefaultRetryPolicy(ctx context.Context, _ *http.Request, resp *http.Respons
 // isCertificateError reports whether err wraps a TLS certificate verification
 // failure. Unlike the redirect-limit and unsupported-scheme failures, these
 // errors are typed, so they are matched with errors.As.
-//
-// Parameters:
-//   - err (error): the error to inspect.
-//
-// Returns:
-//   - ok (bool): true when err is a certificate verification failure.
 func isCertificateError(err error) (ok bool) {
 	var unknownAuthorityError x509.UnknownAuthorityError
 
@@ -351,12 +269,6 @@ func isCertificateError(err error) (ok bool) {
 // Context cancellation and deadline errors are deliberately not classified
 // here: the overall execution context is checked separately by
 // [DefaultRetryPolicy], while a per-attempt timeout must remain retryable.
-//
-// Parameters:
-//   - err (error): the error to inspect.
-//
-// Returns:
-//   - permanent (bool): true when another attempt cannot succeed.
 func isPermanentTransportError(err error) (permanent bool) {
 	if err == nil {
 		return false
@@ -381,15 +293,6 @@ func isPermanentTransportError(err error) (permanent bool) {
 // RetryError reports transport failure after retries. HTTP responses are
 // returned directly and do not produce this error. Err contains the last
 // transport failure, and History records every attempt.
-//
-// Fields:
-//   - Attempts (int): the number of attempts made.
-//   - Method (string): the request method.
-//   - URL (string): the redacted request URL.
-//   - Err (error): the last attempt's transport failure.
-//   - History ([]RetryAttempt): one record per attempt, in order.
-//   - final (bool): marks exhaustion caused by an unreplayable body, which
-//     matches [ErrBodyNotReplayable] instead of [ErrRetriesExhausted].
 type RetryError struct {
 	Attempts int
 	Method   string
@@ -401,14 +304,6 @@ type RetryError struct {
 }
 
 // RetryAttempt describes one attempt recorded in a [RetryError].
-//
-// Fields:
-//   - Attempt (int): the 1-based attempt number.
-//   - StatusCode (int): the response status code, or zero when no response
-//     arrived.
-//   - Status (string): the response status line, or empty.
-//   - Err (error): the attempt's transport error, or nil.
-//   - Duration (time.Duration): the attempt's elapsed time.
 type RetryAttempt struct {
 	Attempt    int
 	StatusCode int
@@ -418,28 +313,21 @@ type RetryAttempt struct {
 }
 
 // Error returns the retry failure's message.
-//
-// Returns:
-//   - msg (string): "http.Client.Do: giving up ..." with the attempt count,
-//     method, URL, and — when present — the last failure.
 func (e *RetryError) Error() (msg string) {
 	if e == nil {
-		return "http.Client.Do: giving up"
+		return "giving up"
 	}
 
 	if e.Err != nil {
-		return fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s): %v",
+		return fmt.Sprintf("giving up after %d attempt(s) (%s %s): %v",
 			e.Attempts, e.Method, e.URL, e.Err)
 	}
 
-	return fmt.Sprintf("http.Client.Do: giving up after %d attempt(s) (%s %s)",
+	return fmt.Sprintf("giving up after %d attempt(s) (%s %s)",
 		e.Attempts, e.Method, e.URL)
 }
 
 // Unwrap exposes the last attempt's failure for errors.Is and errors.As.
-//
-// Returns:
-//   - err (error): the wrapped failure, or nil for a nil receiver.
 func (e *RetryError) Unwrap() (err error) {
 	if e == nil {
 		return nil
@@ -450,13 +338,6 @@ func (e *RetryError) Unwrap() (err error) {
 
 // Is reports whether target is [ErrRetriesExhausted]. A failure caused by a
 // body that cannot be replayed matches [ErrBodyNotReplayable] instead.
-//
-// Parameters:
-//   - target (error): the error to match.
-//
-// Returns:
-//   - match (bool): true when target is [ErrRetriesExhausted] and the
-//     exhaustion was not caused by an unreplayable body.
 func (e *RetryError) Is(target error) (match bool) {
 	if target != ErrRetriesExhausted {
 		return false
@@ -467,13 +348,6 @@ func (e *RetryError) Is(target error) (match bool) {
 
 // retryableError marks an outcome approved for retry. A final marker reports
 // that a transport failure could not be resent because its body was exhausted.
-//
-// Fields:
-//   - err (error): the wrapped failure.
-//   - resp (*http.Response): the retried response, drained by the retry hook;
-//     it becomes the final response when attempts end.
-//   - attempt (int): the 1-based attempt number that produced the outcome.
-//   - final (bool): true when the body could not be replayed, ending retries.
 type retryableError struct {
 	err     error
 	resp    *http.Response
@@ -482,9 +356,6 @@ type retryableError struct {
 }
 
 // Error returns the wrapped failure's message.
-//
-// Returns:
-//   - msg (string): the error message.
 func (e *retryableError) Error() (msg string) {
 	msg = e.err.Error()
 
@@ -492,9 +363,6 @@ func (e *retryableError) Error() (msg string) {
 }
 
 // Unwrap exposes the wrapped failure for errors.Is and errors.As.
-//
-// Returns:
-//   - err (error): the wrapped failure.
 func (e *retryableError) Unwrap() (err error) {
 	err = e.err
 
@@ -511,13 +379,6 @@ func (e *retryableError) Unwrap() (err error) {
 //
 //	Retry-After: 120
 //	Retry-After: Fri, 31 Dec 1999 23:59:59 GMT
-//
-// Parameters:
-//   - resp (*http.Response): the response whose header is parsed.
-//
-// Returns:
-//   - wait (time.Duration): the requested wait; 0 for a date in the past.
-//   - ok (bool): true when the header was present and parseable.
 func retryAfterWait(resp *http.Response) (wait time.Duration, ok bool) {
 	header := strings.TrimSpace(resp.Header.Get("Retry-After"))
 	if header == "" {

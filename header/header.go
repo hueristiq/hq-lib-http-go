@@ -14,9 +14,6 @@ type Header string
 // header names as strings, such as the net/http package. It is safe to call
 // on any Header value, including uninitialized or zero values, as it simply
 // performs a type conversion to string.
-//
-// Returns:
-//   - header (string): the HTTP header field name as a string.
 func (h Header) String() (header string) {
 	header = string(h)
 

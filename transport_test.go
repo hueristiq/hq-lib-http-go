@@ -1,4 +1,4 @@
-package http_test
+package httpclient_test
 
 import (
 	"crypto/tls"
@@ -185,7 +185,7 @@ func TestClientPeriodicIdleConnectionClose(t *testing.T) {
 	transport := &closeCountingTransport{}
 	client := mustNew(t,
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
-		hqgohttp.WithMaxRequestsBeforeIdleClose(1),
+		hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{MaxRequestsBeforeIdleClose: 1}),
 	)
 
 	res, err := client.Do(newRequest(t, http.MethodGet, "http://example.com", http.NoBody))

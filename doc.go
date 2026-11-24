@@ -1,10 +1,10 @@
-// Package http provides a resilient HTTP client around standard requests and
-// responses.
+// Package httpclient provides a resilient HTTP client around standard requests
+// and responses.
 //
-// [New] creates a [Client]. Build requests with [http.NewRequestWithContext]
-// and execute them with [Client.Do]:
+// [New] creates a [Client]. Build requests with net/http's
+// NewRequestWithContext and execute them with [Client.Do]:
 //
-//	client, err := http.New()
+//	client, err := hqgohttp.New()
 //	if err != nil {
 //		return err
 //	}
@@ -21,8 +21,8 @@
 //	}
 //	defer res.Body.Close()
 //
-// The package name collides with net/http, so applications normally import it
-// as hqgohttp and use the net/http request constructors and types.
+// Applications normally import this package as hqgohttp and use the net/http
+// request constructors and types.
 //
 // # Defaults
 //
@@ -65,4 +65,4 @@
 // not consume bodies. Retry hooks may inspect only status and headers after a
 // failed body has been drained. [PrepareRetryFunc] may update a request before
 // the next attempt and may return an error to stop execution.
-package http
+package httpclient

@@ -7,9 +7,6 @@ package useragent
 type Platform string
 
 // String returns the platform name.
-//
-// Returns:
-//   - platform (string): the platform name.
 func (p Platform) String() (platform string) {
 	platform = string(p)
 

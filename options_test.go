@@ -1,4 +1,4 @@
-package http_test
+package httpclient_test
 
 import (
 	"crypto/tls"
@@ -24,10 +24,10 @@ func TestNewRejectsInvalidValues(t *testing.T) {
 		{name: "execution timeout", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithTimeout(-time.Second)}},
 		{name: "body timeout", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithResponseBodyTimeout(-time.Second)}},
 		{name: "attempt timeout", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithAttemptTimeout(-time.Second)}},
-		{name: "fallback TTL", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithHTTP3FallbackTTL(-time.Second)}},
+		{name: "fallback TTL", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{HTTP3FallbackTTL: -time.Second})}},
 		{name: "attempt count", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithRetryMaxAttempts(0)}},
-		{name: "read limit", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithResponseReadLimit(0)}},
-		{name: "idle threshold", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithMaxRequestsBeforeIdleClose(-1)}},
+		{name: "read limit", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{ResponseReadLimit: -1})}},
+		{name: "idle threshold", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{MaxRequestsBeforeIdleClose: -1})}},
 		{name: "missing HTTP3 client", opts: []hqgohttp.ClientOptionFunc{hqgohttp.WithProtocol(hqgohttp.ProtocolHTTP3)}},
 	}
 
@@ -85,9 +85,8 @@ func TestNewDefaultsAndValidZeroValues(t *testing.T) {
 		hqgohttp.WithTimeout(0),
 		hqgohttp.WithResponseBodyTimeout(0),
 		hqgohttp.WithAttemptTimeout(0),
-		hqgohttp.WithHTTP3FallbackTTL(0),
+		hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{}),
 		hqgohttp.WithRetryPolicy(nil),
-		hqgohttp.WithMaxRequestsBeforeIdleClose(0),
 	)
 	assert.NotNil(t, client)
 }

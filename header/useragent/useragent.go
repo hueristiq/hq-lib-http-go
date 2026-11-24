@@ -5,11 +5,6 @@ import (
 )
 
 // entry is one User-Agent value together with the filters it answers to.
-//
-// Fields:
-//   - userAgent (string): the generated User-Agent value.
-//   - platform (Platform): the platform the value advertises.
-//   - browser (Browser): the browser family the value advertises.
 type entry struct {
 	userAgent string
 	platform  Platform
@@ -17,10 +12,6 @@ type entry struct {
 }
 
 // Options holds the filters applied by [Random] and [List].
-//
-// Fields:
-//   - Platform (Platform): the platform filter; the zero value means any.
-//   - Browser (Browser): the browser filter; the zero value means any.
 type Options struct {
 	Platform Platform
 	Browser  Browser
@@ -28,16 +19,9 @@ type Options struct {
 
 // OptionFunc configures a User-Agent draw or listing. The zero value of a filter
 // means no constraint. A nil OptionFunc is ignored.
-//
-// Parameters:
-//   - opts (*Options): the filters under construction.
 type OptionFunc func(*Options)
 
 // filterKey identifies one combination of browser and platform filters.
-//
-// Fields:
-//   - browser (Browser): the browser filter, or empty for any.
-//   - platform (Platform): the platform filter, or empty for any.
 type filterKey struct {
 	browser  Browser
 	platform Platform
@@ -55,12 +39,6 @@ var (
 )
 
 // WithPlatform returns an [OptionFunc] that restricts the result to one platform.
-//
-// Parameters:
-//   - platform (Platform): the platform to select.
-//
-// Returns:
-//   - option (OptionFunc): the functional option.
 func WithPlatform(platform Platform) (option OptionFunc) {
 	option = func(opts *Options) {
 		opts.Platform = platform
@@ -70,12 +48,6 @@ func WithPlatform(platform Platform) (option OptionFunc) {
 }
 
 // WithBrowser returns an [OptionFunc] that restricts the result to one browser.
-//
-// Parameters:
-//   - browser (Browser): the browser to select.
-//
-// Returns:
-//   - option (OptionFunc): the functional option.
 func WithBrowser(browser Browser) (option OptionFunc) {
 	option = func(opts *Options) {
 		opts.Browser = browser
@@ -85,9 +57,6 @@ func WithBrowser(browser Browser) (option OptionFunc) {
 }
 
 // buildCatalog enumerates every generator and removes duplicate values.
-//
-// Returns:
-//   - entries ([]entry): the deduplicated catalog.
 func buildCatalog() (entries []entry) {
 	entries = make([]entry, 0, 4096)
 
@@ -118,12 +87,6 @@ func buildCatalog() (entries []entry) {
 
 // buildCatalogIndex groups entries by browser, platform, and their
 // intersection.
-//
-// Parameters:
-//   - entries ([]entry): the deduplicated catalog.
-//
-// Returns:
-//   - index (map[filterKey][]entry): the per-filter entry slices.
 func buildCatalogIndex(entries []entry) (index map[filterKey][]entry) {
 	index = make(map[filterKey][]entry)
 
@@ -141,12 +104,6 @@ func buildCatalogIndex(entries []entry) (index map[filterKey][]entry) {
 }
 
 // resolveOptions applies the functional options in order.
-//
-// Parameters:
-//   - opts ([]OptionFunc): the options to apply.
-//
-// Returns:
-//   - resolved (Options): the resolved filters.
 func resolveOptions(opts []OptionFunc) (resolved Options) {
 	for _, option := range opts {
 		if option == nil {
@@ -161,12 +118,6 @@ func resolveOptions(opts []OptionFunc) (resolved Options) {
 
 // matchingEntries returns the catalog entries that satisfy the filters. The
 // returned slice is shared with the package index and must not be mutated.
-//
-// Parameters:
-//   - filter (Options): the filters to apply.
-//
-// Returns:
-//   - entries ([]entry): the matching entries, empty when none match.
 func matchingEntries(filter Options) (entries []entry) {
 	if filter.Platform == "" && filter.Browser == "" {
 		return catalog
@@ -185,12 +136,6 @@ func matchingEntries(filter Options) (entries []entry) {
 // returns an empty slice. [Random] relaxes such a combination instead.
 //
 // The returned slice is a copy: mutating it never affects the package.
-//
-// Parameters:
-//   - opts (...OptionFunc): optional platform and browser filters.
-//
-// Returns:
-//   - userAgents ([]string): the matching User-Agent values.
 func List(opts ...OptionFunc) (userAgents []string) {
 	filter := resolveOptions(opts)
 	entries := matchingEntries(filter)
@@ -214,12 +159,6 @@ func List(opts ...OptionFunc) (userAgents []string) {
 //
 // The draw uses a pseudorandom source, not a cryptographic one: it suits
 // request rotation, not security decisions.
-//
-// Parameters:
-//   - opts (...OptionFunc): optional platform and browser filters.
-//
-// Returns:
-//   - userAgent (string): a random matching User-Agent value.
 func Random(opts ...OptionFunc) (userAgent string) {
 	filter := resolveOptions(opts)
 	entries := matchingEntries(filter)
@@ -248,12 +187,6 @@ func Random(opts ...OptionFunc) (userAgent string) {
 //
 // The platform is always desktop; the caller's browser filter still applies,
 // and [Random]'s fallback rules cover a browser that has no desktop variants.
-//
-// Parameters:
-//   - opts (...OptionFunc): optional browser filters.
-//
-// Returns:
-//   - userAgent (string): a random desktop User-Agent value.
 func RandomDesktop(opts ...OptionFunc) (userAgent string) {
 	userAgent = randomForPlatform(PlatformDesktop, opts...)
 
@@ -264,12 +197,6 @@ func RandomDesktop(opts ...OptionFunc) (userAgent string) {
 //
 // The platform is always mobile; the caller's browser filter still applies,
 // and [Random]'s fallback rules cover a browser that has no mobile variants.
-//
-// Parameters:
-//   - opts (...OptionFunc): optional browser filters.
-//
-// Returns:
-//   - userAgent (string): a random mobile User-Agent value.
 func RandomMobile(opts ...OptionFunc) (userAgent string) {
 	userAgent = randomForPlatform(PlatformMobile, opts...)
 
@@ -277,13 +204,6 @@ func RandomMobile(opts ...OptionFunc) (userAgent string) {
 }
 
 // randomForPlatform forces a platform and delegates the draw to [Random].
-//
-// Parameters:
-//   - platform (Platform): the platform to force.
-//   - opts (...OptionFunc): optional browser filters.
-//
-// Returns:
-//   - userAgent (string): a random User-Agent value for the platform.
 func randomForPlatform(platform Platform, opts ...OptionFunc) (userAgent string) {
 	forced := make([]OptionFunc, 0, len(opts)+1)
 

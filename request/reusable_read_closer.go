@@ -2,13 +2,13 @@ package request
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
 	"io"
 	"math"
 	"reflect"
 	"strings"
 	"sync"
+
+	hqgoerrors "github.com/hueristiq/hq-lib-errors-go"
 )
 
 // ReusableReadCloser implements the io.ReadCloser interface by wrapping an
@@ -22,11 +22,6 @@ import (
 //
 // The zero value is usable and reads as an empty payload. A nil
 // *ReusableReadCloser is also safe: Read returns io.EOF and Reset is a no-op.
-//
-// Fields:
-//   - mu (sync.Mutex): guards the reader position.
-//   - data ([]byte): the immutable payload served by every read cycle.
-//   - reader (*bytes.Reader): the cursor over data.
 type ReusableReadCloser struct {
 	mu     sync.Mutex
 	data   []byte
@@ -43,14 +38,6 @@ var _ io.ReadCloser = (*ReusableReadCloser)(nil)
 //
 // Concurrency:
 //   - The method employs a mutex (mu) to guarantee that concurrent calls to Read are thread-safe.
-//
-// Parameters:
-//   - p ([]byte): the buffer into which data is to be read.
-//
-// Returns:
-//   - n (int): the number of bytes successfully read into the buffer p.
-//   - err (error): io.EOF once the data is exhausted, or a read error from the
-//     underlying reader.
 func (r *ReusableReadCloser) Read(p []byte) (n int, err error) {
 	if r == nil {
 		return 0, io.EOF
@@ -85,9 +72,6 @@ func (r *ReusableReadCloser) Reset() {
 // clone returns an independent closer over the same immutable payload,
 // positioned at the start. It backs the GetBody function of requests built by
 // GetBody.
-//
-// Returns:
-//   - clone (*ReusableReadCloser): a fresh closer over the same data.
 func (r *ReusableReadCloser) clone() (clone *ReusableReadCloser) {
 	if r == nil {
 		return &ReusableReadCloser{reader: bytes.NewReader(nil)}
@@ -118,20 +102,17 @@ func (r *ReusableReadCloser) reset() {
 
 // Close implements the io.Closer interface. Since ReusableReadCloser operates solely
 // on in-memory data and does not manage external resources, Close is a no-op that always returns nil.
-//
-// Returns:
-//   - err (error): Always nil.
 func (r *ReusableReadCloser) Close() (err error) {
 	return nil
 }
 
 // ErrUnsupportedBodyType reports an input type that [NewReusableReadCloser]
 // cannot convert into a request body.
-var ErrUnsupportedBodyType = errors.New("unsupported body type")
+const ErrUnsupportedBodyType hqgoerrors.Sentinel = "unsupported body type"
 
 // ErrBodyTooLarge reports a request body that exceeds the configured buffering
 // limit. It is returned by [NewReusableReadCloserLimited].
-var ErrBodyTooLarge = errors.New("request body exceeds the configured limit")
+const ErrBodyTooLarge hqgoerrors.Sentinel = "request body exceeds the configured limit"
 
 // NewReusableReadCloser creates a new instance of ReusableReadCloser from a variety of input data types.
 // The function converts the provided input into an in‑memory byte slice and initializes a bytes.Reader,
@@ -150,14 +131,6 @@ var ErrBodyTooLarge = errors.New("request body exceeds the configured limit")
 // *[]byte, or *bytes.Buffer argument do not change the request body. An input
 // that implements io.Closer is closed after it has been consumed, including
 // when reading fails.
-//
-// Parameters:
-//   - raw (any): the input data to be converted to a byte slice. The function handles
-//     the conversion based on the dynamic type of the input.
-//
-// Returns:
-//   - reusableReadCloser (*ReusableReadCloser): a pointer to the newly created ReusableReadCloser instance.
-//   - err (error): an error if the input type is unsupported or if an error occurs during data reading.
 func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err error) {
 	reusableReadCloser, err = NewReusableReadCloserLimited(raw, 0)
 
@@ -173,16 +146,6 @@ func NewReusableReadCloser(raw any) (reusableReadCloser *ReusableReadCloser, err
 // io.Reader, so an oversized payload is rejected without being fully retained.
 // An input that implements io.Closer is closed after it has been consumed,
 // including when reading fails or the limit is exceeded.
-//
-// Parameters:
-//   - raw (any): the input data to convert.
-//   - limit (int64): the maximum payload size in bytes; non-positive means
-//     unlimited.
-//
-// Returns:
-//   - reusableReadCloser (*ReusableReadCloser): the buffered body.
-//   - err (error): [ErrBodyTooLarge] when the payload exceeds the limit,
-//     [ErrUnsupportedBodyType] for an unsupported type, or a read error.
 func NewReusableReadCloserLimited(raw any, limit int64) (reusableReadCloser *ReusableReadCloser, err error) {
 	var data []byte
 
@@ -259,7 +222,7 @@ func NewReusableReadCloserLimited(raw any, limit int64) (reusableReadCloser *Reu
 			return nil, ErrBodyTooLarge
 		}
 	default:
-		err = fmt.Errorf("%w: %T", ErrUnsupportedBodyType, v)
+		err = hqgoerrors.Errorf("%w: %T", ErrUnsupportedBodyType, v)
 
 		return nil, err
 	}
@@ -273,13 +236,6 @@ func NewReusableReadCloserLimited(raw any, limit int64) (reusableReadCloser *Reu
 }
 
 // exceedsLimit reports whether size is over a positive limit.
-//
-// Parameters:
-//   - size (int64): the payload size.
-//   - limit (int64): the maximum allowed size; non-positive means unlimited.
-//
-// Returns:
-//   - exceeds (bool): true when size is greater than a positive limit.
 func exceedsLimit(size, limit int64) (exceeds bool) {
 	exceeds = limit > 0 && size > limit
 
@@ -288,12 +244,6 @@ func exceedsLimit(size, limit int64) (exceeds bool) {
 
 // isNilReader reports whether r is nil or holds a typed-nil value, so a
 // typed-nil pointer is treated as an empty body instead of panicking on Read.
-//
-// Parameters:
-//   - r (io.Reader): the reader to inspect.
-//
-// Returns:
-//   - nilReader (bool): true when r is nil or a typed-nil value.
 func isNilReader(r io.Reader) (nilReader bool) {
 	if r == nil {
 		return true

@@ -1,9 +1,10 @@
-package http
+package httpclient
 
 import (
 	"context"
-	"errors"
 	"net/http"
+
+	hqgoerrors "github.com/hueristiq/hq-lib-errors-go"
 )
 
 // RateLimiter defines the contract for pacing request attempts made by a
@@ -33,43 +34,19 @@ type RateLimiter interface {
 	// callbacks and round trip. Returning nil admits the attempt; returning an
 	// error cancels it and the error is returned to the caller of
 	// [Client.Do].
-	//
-	// Parameters:
-	//   - ctx (context.Context): the execution context; its cancellation
-	//     aborts the wait.
-	//   - req (*http.Request): the request about to be attempted, for
-	//     per-host or per-endpoint policies. It must not be modified.
-	//
-	// Returns:
-	//   - err (error): non-nil when the wait fails, typically from context
-	//     cancellation.
 	Wait(ctx context.Context, req *http.Request) (err error)
 }
 
 // RateLimiterFunc adapts a function to [RateLimiter]. Use it to adapt limiters
 // that only accept a context or to inspect the outgoing request.
-//
-// Parameters:
-//   - ctx (context.Context): the execution context.
-//   - req (*http.Request): the request about to be attempted.
-//
-// Returns:
-//   - err (error): non-nil when the wait fails.
 type RateLimiterFunc func(ctx context.Context, req *http.Request) (err error)
 
 var _ RateLimiter = RateLimiterFunc(nil)
 
 // Wait calls f(ctx, req), or returns an error when f is nil.
-//
-// Parameters:
-//   - ctx (context.Context): the execution context.
-//   - req (*http.Request): the request about to be attempted.
-//
-// Returns:
-//   - err (error): the wrapped function's result, or non-nil for a nil f.
 func (f RateLimiterFunc) Wait(ctx context.Context, req *http.Request) (err error) {
 	if f == nil {
-		return errors.New("http.RateLimiterFunc: nil limiter")
+		return hqgoerrors.New("nil limiter")
 	}
 
 	return f(ctx, req)

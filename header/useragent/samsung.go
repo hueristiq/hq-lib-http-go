@@ -6,10 +6,6 @@ import (
 
 // samsungInternetRelease pairs a Samsung Internet version with the Chromium
 // version it ships.
-//
-// Fields:
-//   - chromium (string): the Chromium major version.
-//   - version (string): the Samsung Internet version.
 type samsungInternetRelease struct {
 	chromium string
 	version  string
@@ -31,9 +27,6 @@ var samsungInternetReleases = []samsungInternetRelease{
 }
 
 // genSamsungInternetAndroid generates Samsung Internet User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genSamsungInternetAndroid() (userAgents []string) {
 	count := 0
 

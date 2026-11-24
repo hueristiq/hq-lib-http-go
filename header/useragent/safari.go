@@ -2,10 +2,6 @@ package useragent
 
 // safariDesktopRelease pairs a Safari version with the macOS releases that
 // support it.
-//
-// Fields:
-//   - version (string): the Safari version.
-//   - macOS ([]string): the macOS platform tokens that run the release.
 type safariDesktopRelease struct {
 	version string
 	macOS   []string
@@ -86,9 +82,6 @@ var safariDesktopReleases = []safariDesktopRelease{
 }
 
 // genSafariDesktop generates Safari desktop User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genSafariDesktop() (userAgents []string) {
 	count := 0
 
@@ -108,9 +101,6 @@ func genSafariDesktop() (userAgents []string) {
 }
 
 // genSafariIOS generates Safari on iOS User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genSafariIOS() (userAgents []string) {
 	userAgents = make([]string, 0, iosCombinationCount())
 

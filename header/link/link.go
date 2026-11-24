@@ -13,15 +13,6 @@ import (
 // parameters associated with the link. The structure is designed to facilitate
 // easy access to link components and to support formatting back into a valid
 // Link header string.
-//
-// Fields:
-//   - URL (string): the target URI for the link (e.g., "https://api.example.com/page/2").
-//   - Rel (string): the link relation type (e.g., "next", "prev", "author").
-//   - Params (map[string]string): a map of additional key/value pairs associated
-//     with the link, with keys kept as written in the header (e.g.,
-//     {"title": "Next Page"}). Parameter names are compared case-insensitively;
-//     a repeated parameter keeps its first spelling and value. Parameters that
-//     allow multiple values, such as hreflang, collapse to the first one.
 type WebLink struct {
 	URL    string
 	Rel    string
@@ -40,9 +31,6 @@ type WebLink struct {
 // The method ensures proper quoting of parameter values to comply with
 // HTTP Link header syntax. CR and LF characters in the URL, keys, and values
 // are replaced with spaces so the result stays a single header value.
-//
-// Returns:
-//   - link (string): a formatted string representation of the WebLink.
 func (l WebLink) String() (link string) {
 	keys := make([]string, 0, len(l.Params))
 
@@ -79,12 +67,6 @@ func (l WebLink) String() (link string) {
 //
 // Parameter names are matched case-insensitively. The "rel" parameter is stored
 // in [WebLink.Rel] and is reported when it is non-empty.
-//
-// Parameters:
-//   - key (string): the parameter name to check for.
-//
-// Returns:
-//   - hasParam (bool): true if the parameter exists, false otherwise.
 func (l WebLink) HasParam(key string) (hasParam bool) {
 	if strings.EqualFold(key, "rel") {
 		return l.Rel != ""
@@ -104,12 +86,6 @@ func (l WebLink) HasParam(key string) (hasParam bool) {
 // If the parameter does not exist, an empty string is returned. Parameter names
 // are matched case-insensitively. The "rel" parameter is stored in
 // [WebLink.Rel] and is returned when it is non-empty.
-//
-// Parameters:
-//   - key (string): the parameter name to retrieve.
-//
-// Returns:
-//   - param (string): the value of the parameter, or an empty string if not found.
 func (l WebLink) Param(key string) (param string) {
 	if strings.EqualFold(key, "rel") {
 		return l.Rel
@@ -137,9 +113,6 @@ type WebLinks []WebLink
 // Each WebLink is formatted using its String method, and the resulting strings
 // are joined with a comma and a space (", ") to conform to the HTTP Link header
 // format. If the slice is empty, an empty string is returned.
-//
-// Returns:
-//   - links (string): a comma-separated string of all link representations.
 func (l WebLinks) String() (links string) {
 	if len(l) == 0 {
 		return links
@@ -163,12 +136,6 @@ func (l WebLinks) String() (links string) {
 // value matches when any of its relation types matches. This method is useful
 // for extracting links with specific relation types, such as "next" or "prev"
 // for pagination, from a larger collection.
-//
-// Parameters:
-//   - rel (string): the relation type to filter by (case-insensitive).
-//
-// Returns:
-//   - links (WebLinks): a new WebLinks slice containing only links with a matching Rel value.
 func (l WebLinks) FilterByRel(rel string) (links WebLinks) {
 	links = make(WebLinks, 0, len(l))
 
@@ -196,12 +163,6 @@ func (l WebLinks) FilterByRel(rel string) (links WebLinks) {
 // repeated parameter keeps its first value. An empty URI reference (`<>`, the
 // current document) is preserved. If the input is empty or contains only invalid
 // entries, an empty non-nil WebLinks slice is returned.
-//
-// Parameters:
-//   - raw (string): the raw HTTP Link header string to parse.
-//
-// Returns:
-//   - links (WebLinks): a slice of WebLink objects representing the parsed links.
 func Parse(raw string) (links WebLinks) {
 	links = make(WebLinks, 0)
 
@@ -284,12 +245,6 @@ func Parse(raw string) (links WebLinks) {
 // outside angle brackets and quoted strings. Comma-separated link-values are
 // the outermost structure of a Link header; commas inside a URL or a quoted
 // parameter value are data.
-//
-// Parameters:
-//   - raw (string): the raw Link header string.
-//
-// Returns:
-//   - entries ([]string): the comma-separated entries, trimmed.
 func splitLinkEntries(raw string) (entries []string) {
 	start := 0
 	inAngle := false
@@ -328,12 +283,6 @@ func splitLinkEntries(raw string) (entries []string) {
 // splitLinkParameters splits one link-value into its URL and parameter
 // pieces. Semicolons inside the angle-bracketed URL or a quoted parameter
 // value do not split.
-//
-// Parameters:
-//   - raw (string): One link-value, trimmed.
-//
-// Returns:
-//   - pieces ([]string): the semicolon-separated pieces, trimmed.
 func splitLinkParameters(raw string) (pieces []string) {
 	start := 0
 	inAngle := false
@@ -374,15 +323,6 @@ func splitLinkParameters(raw string) (pieces []string) {
 // It extracts the key and value, unquoting a quoted-string value and honoring
 // its backslash escapes. A parameter without "=" yields an empty value. The
 // function is unexported, as it is an internal helper used by Parse.
-//
-// Parameters:
-//   - raw (string): the raw parameter string to parse (e.g., `rel="next"`,
-//     `title="Next Page"`); must not be empty.
-//
-// Returns:
-//   - key (string): the parsed parameter name.
-//   - value (string): the parsed parameter value, with quotes and escapes
-//     resolved.
 func parseParameter(raw string) (key, value string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -413,13 +353,6 @@ func parseParameter(raw string) (key, value string) {
 // lines, as allowed by HTTP specifications (e.g., multiple "Link" headers in an
 // HTTP response). It parses each header string using Parse and combines the
 // results into a single WebLinks slice.
-//
-// Parameters:
-//   - headers ([]string): a slice of raw HTTP Link header strings, each
-//     potentially containing multiple links.
-//
-// Returns:
-//   - links (WebLinks): a combined WebLinks slice containing all parsed WebLink objects.
 func ParseMultiple(headers []string) (links WebLinks) {
 	links = make(WebLinks, 0, len(headers))
 
@@ -432,12 +365,6 @@ func ParseMultiple(headers []string) (links WebLinks) {
 
 // sanitizeLinkToken replaces CR and LF with spaces so a token cannot split the
 // resulting header value.
-//
-// Parameters:
-//   - value (string): the token to sanitize.
-//
-// Returns:
-//   - sanitized (string): the token with CR and LF replaced.
 func sanitizeLinkToken(value string) (sanitized string) {
 	sanitized = strings.Map(func(r rune) rune {
 		if r == '\r' || r == '\n' {
@@ -452,12 +379,6 @@ func sanitizeLinkToken(value string) (sanitized string) {
 
 // quoteLinkValue serializes value as an [RFC 7230](https://www.rfc-editor.org/info/rfc7230/) quoted-string, escaping the
 // quote and backslash characters and replacing CR and LF with spaces.
-//
-// Parameters:
-//   - value (string): the parameter value.
-//
-// Returns:
-//   - quoted (string): the quoted value.
 func quoteLinkValue(value string) (quoted string) {
 	var b strings.Builder
 
@@ -485,13 +406,6 @@ func quoteLinkValue(value string) (quoted string) {
 // unquoteLinkValue resolves an [RFC 8288](https://www.rfc-editor.org/info/rfc8288/) quoted-string. It reports false when
 // value is not a complete quoted string, in which case the caller keeps the
 // value verbatim.
-//
-// Parameters:
-//   - value (string): the raw parameter value.
-//
-// Returns:
-//   - unquoted (string): the unescaped value.
-//   - ok (bool): true when value was a complete quoted string.
 func unquoteLinkValue(value string) (unquoted string, ok bool) {
 	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
 		return "", false

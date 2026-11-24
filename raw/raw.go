@@ -5,12 +5,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"time"
+
+	hqgoerrors "github.com/hueristiq/hq-lib-errors-go"
 )
 
 // DefaultTimeout is the default bound on a whole exchange — dial, write, and
@@ -20,13 +20,6 @@ const DefaultTimeout = 30 * time.Second
 
 // Options holds the configurable knobs of a [Do] exchange, populated through
 // [OptionFunc] values.
-//
-// Fields:
-//   - UseTLS (bool): whether the connection is wrapped in TLS.
-//   - TLSConfig (*tls.Config): the TLS configuration; nil means a secure
-//     default derived from the address.
-//   - Timeout (time.Duration): the exchange bound when the context carries
-//     no earlier deadline. Non-positive means [DefaultTimeout].
 type Options struct {
 	UseTLS    bool
 	TLSConfig *tls.Config
@@ -36,19 +29,10 @@ type Options struct {
 // OptionFunc configures a [Do] exchange through the functional-options idiom.
 //
 // When the same option is supplied more than once, the last one wins.
-//
-// Parameters:
-//   - opts (*Options): the options bag to mutate.
 type OptionFunc func(opts *Options)
 
 // WithTLS returns an [OptionFunc] that selects whether the connection is
 // wrapped in TLS. When a [WithTLSConfig] option is supplied, TLS is implied.
-//
-// Parameters:
-//   - enabled (bool): true to dial TLS, false for cleartext TCP.
-//
-// Returns:
-//   - f (OptionFunc): a functional option that sets the UseTLS field.
 func WithTLS(enabled bool) (f OptionFunc) {
 	return func(opts *Options) {
 		opts.UseTLS = enabled
@@ -59,13 +43,6 @@ func WithTLS(enabled bool) (f OptionFunc) {
 // implies TLS. The configuration is cloned before use, so later mutations of
 // the caller's value never affect the exchange; an empty ServerName is filled
 // with the host portion of the address.
-//
-// Parameters:
-//   - config (*tls.Config): the TLS configuration. Nil selects a secure
-//     default with TLS 1.2 as the minimum version.
-//
-// Returns:
-//   - f (OptionFunc): a functional option that sets the TLSConfig field.
 func WithTLSConfig(config *tls.Config) (f OptionFunc) {
 	return func(opts *Options) {
 		opts.TLSConfig = config
@@ -76,13 +53,6 @@ func WithTLSConfig(config *tls.Config) (f OptionFunc) {
 // WithTimeout returns an [OptionFunc] that bounds the whole exchange — dial,
 // TLS handshake, write, and response read — when the context carries no
 // earlier deadline. Without any deadline the exchange can block forever.
-//
-// Parameters:
-//   - timeout (time.Duration): the exchange bound. Values less than or equal
-//     to 0 fall back to [DefaultTimeout].
-//
-// Returns:
-//   - f (OptionFunc): a functional option that sets the Timeout field.
 func WithTimeout(timeout time.Duration) (f OptionFunc) {
 	return func(opts *Options) {
 		opts.Timeout = timeout
@@ -92,10 +62,6 @@ func WithTimeout(timeout time.Duration) (f OptionFunc) {
 // responseBody binds a response body to its connection: closing the body
 // closes the connection. A raw exchange serves exactly one request on its
 // connection, so the connection has no use after the body.
-//
-// Fields:
-//   - body (io.ReadCloser): the parsed response body.
-//   - conn (net.Conn): the connection the body is read from.
 type responseBody struct {
 	body io.ReadCloser
 	conn net.Conn
@@ -105,13 +71,6 @@ type responseBody struct {
 var _ io.ReadCloser = (*responseBody)(nil)
 
 // Read reads from the response body.
-//
-// Parameters:
-//   - p ([]byte): the buffer to read into.
-//
-// Returns:
-//   - n (int): the number of bytes read.
-//   - err (error): non-nil when the read fails.
 func (b *responseBody) Read(p []byte) (n int, err error) {
 	n, err = b.body.Read(p)
 
@@ -119,9 +78,6 @@ func (b *responseBody) Read(p []byte) (n int, err error) {
 }
 
 // Close closes the response body and the connection it is read from.
-//
-// Returns:
-//   - err (error): the first close failure, if any.
 func (b *responseBody) Close() (err error) {
 	if err = b.body.Close(); err != nil {
 		_ = b.conn.Close()
@@ -147,26 +103,15 @@ func (b *responseBody) Close() (err error) {
 // configured Timeout; the bound covers the dial, the TLS handshake, writing,
 // and reading the response body, so consume it before the deadline passes.
 // Closing the response body closes the connection.
-//
-// Parameters:
-//   - ctx (context.Context): the context governing the exchange.
-//   - address (string): the host:port pair to connect to.
-//   - request ([]byte): the raw HTTP/1.x request bytes.
-//   - ofs (...OptionFunc): functional Options configuring the exchange.
-//
-// Returns:
-//   - res (*http.Response): the parsed response; the caller owns and must
-//     close its body, which closes the connection.
-//   - err (error): non-nil when the exchange fails.
 func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) (res *http.Response, err error) {
 	if address == "" {
-		err = errors.New("raw.Do: address is empty")
+		err = hqgoerrors.New("address is empty")
 
 		return
 	}
 
 	if len(request) == 0 {
-		err = errors.New("raw.Do: request is empty")
+		err = hqgoerrors.New("request is empty")
 
 		return
 	}
@@ -198,7 +143,7 @@ func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) 
 
 	conn, err := dial(dialCtx, address, opts)
 	if err != nil {
-		err = fmt.Errorf("raw.Do: dialing %s: %w", address, err)
+		err = hqgoerrors.Wrapf(err, "dialing %s", address)
 
 		return
 	}
@@ -212,14 +157,14 @@ func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) 
 	_ = conn.SetDeadline(deadline)
 
 	if err = writeRequest(conn, request); err != nil {
-		err = fmt.Errorf("raw.Do: writing request: %w", err)
+		err = hqgoerrors.Wrap(err, "writing request")
 
 		return
 	}
 
 	res, err = http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: requestMethod(request)})
 	if err != nil {
-		err = fmt.Errorf("raw.Do: reading response: %w", err)
+		err = hqgoerrors.Wrap(err, "reading response")
 
 		return
 	}
@@ -231,15 +176,6 @@ func Do(ctx context.Context, address string, request []byte, ofs ...OptionFunc) 
 
 // dial establishes the connection for an exchange: TCP with a context-aware
 // dial, then a TLS handshake when configured.
-//
-// Parameters:
-//   - ctx (context.Context): bounds the dial and the handshake.
-//   - address (string): the host:port pair to connect to.
-//   - opts (*Options): the exchange configuration.
-//
-// Returns:
-//   - conn (net.Conn): the connected, possibly TLS-wrapped connection.
-//   - err (error): non-nil when dialing or the handshake fails.
 func dial(ctx context.Context, address string, opts *Options) (conn net.Conn, err error) {
 	dialer := &net.Dialer{}
 
@@ -282,13 +218,6 @@ func dial(ctx context.Context, address string, opts *Options) (conn net.Conn, er
 }
 
 // writeRequest writes the request bytes in full.
-//
-// Parameters:
-//   - conn (net.Conn): the connection to write to.
-//   - request ([]byte): the raw HTTP/1.x request bytes.
-//
-// Returns:
-//   - err (error): non-nil when a write fails before all bytes are sent.
 func writeRequest(conn net.Conn, request []byte) (err error) {
 	pending := request
 
@@ -308,13 +237,6 @@ func writeRequest(conn net.Conn, request []byte) (err error) {
 
 // requestMethod extracts the method from the request line, so the response
 // parser applies the right body semantics — a HEAD response carries no body.
-//
-// Parameters:
-//   - request ([]byte): the raw HTTP/1.x request bytes.
-//
-// Returns:
-//   - method (string): the request method, or "" when the request line does
-//     not parse; the response parser treats that like GET.
 func requestMethod(request []byte) (method string) {
 	line, _, _ := bytes.Cut(request, []byte("\r\n"))
 

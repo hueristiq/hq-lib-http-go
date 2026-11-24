@@ -1,4 +1,4 @@
-package http_test
+package httpclient_test
 
 import (
 	"context"

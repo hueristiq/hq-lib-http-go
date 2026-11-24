@@ -1,4 +1,4 @@
-package http
+package httpclient
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 func TestExecutionTimerStopsAtHeaders(t *testing.T) {
 	t.Parallel()
 
-	client := &Client{config: ClientOptions{Timeout: 10 * time.Millisecond, HTTPClient: new(http.Client)}}
+	client := &Client{config: clientOptions{Timeout: 10 * time.Millisecond, HTTPClient: new(http.Client)}}
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", http.NoBody)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestExecutionTimerStopsAtHeaders(t *testing.T) {
 func TestExecutionTimerExpiresBeforeHeaders(t *testing.T) {
 	t.Parallel()
 
-	client := &Client{config: ClientOptions{Timeout: 10 * time.Millisecond, HTTPClient: new(http.Client)}}
+	client := &Client{config: clientOptions{Timeout: 10 * time.Millisecond, HTTPClient: new(http.Client)}}
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", http.NoBody)
 	if err != nil {

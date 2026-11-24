@@ -2,10 +2,6 @@ package useragent
 
 // operaDesktopRelease pairs a desktop Opera major version with the Chromium
 // version it ships.
-//
-// Fields:
-//   - chromium (string): the Chromium major version.
-//   - opera (string): the Opera major version.
 type operaDesktopRelease struct {
 	chromium string
 	opera    string
@@ -25,10 +21,6 @@ var operaDesktopReleases = []operaDesktopRelease{
 
 // operaAndroidRelease pairs an Opera for Android version with the Chromium
 // version it ships.
-//
-// Fields:
-//   - chromium (string): the Chromium major version.
-//   - opera (string): the Opera for Android version.
 type operaAndroidRelease struct {
 	chromium string
 	opera    string
@@ -53,9 +45,6 @@ var operaIOSVersions = []string{
 }
 
 // genOperaDesktop generates Opera desktop User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genOperaDesktop() (userAgents []string) {
 	userAgents = make([]string, 0, len(operaDesktopReleases)*len(desktopOS))
 
@@ -69,9 +58,6 @@ func genOperaDesktop() (userAgents []string) {
 }
 
 // genOperaAndroid generates Opera for Android User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genOperaAndroid() (userAgents []string) {
 	userAgents = make([]string, 0, len(operaAndroidReleases)*androidCombinationCount())
 
@@ -87,9 +73,6 @@ func genOperaAndroid() (userAgents []string) {
 }
 
 // genOperaIOS generates Opera for iOS User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genOperaIOS() (userAgents []string) {
 	userAgents = make([]string, 0, len(operaIOSVersions)*iosCombinationCount())
 

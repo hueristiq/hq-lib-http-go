@@ -7,9 +7,6 @@ package useragent
 type Browser string
 
 // String returns the browser name.
-//
-// Returns:
-//   - browser (string): the browser name.
 func (b Browser) String() (browser string) {
 	browser = string(b)
 

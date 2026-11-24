@@ -17,9 +17,6 @@ var edgeVersions = []string{
 }
 
 // genEdgeDesktop generates Edge desktop User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genEdgeDesktop() (userAgents []string) {
 	userAgents = make([]string, 0, len(edgeVersions)*len(desktopOS))
 
@@ -33,9 +30,6 @@ func genEdgeDesktop() (userAgents []string) {
 }
 
 // genEdgeAndroid generates Edge for Android User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genEdgeAndroid() (userAgents []string) {
 	userAgents = make([]string, 0, len(edgeVersions)*androidCombinationCount())
 
@@ -51,9 +45,6 @@ func genEdgeAndroid() (userAgents []string) {
 }
 
 // genEdgeIOS generates Edge for iOS User-Agents.
-//
-// Returns:
-//   - userAgents ([]string): the generated User-Agents.
 func genEdgeIOS() (userAgents []string) {
 	userAgents = make([]string, 0, len(edgeVersions)*iosCombinationCount())
 

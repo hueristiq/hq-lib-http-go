@@ -1,4 +1,4 @@
-package http_test
+package httpclient_test
 
 import (
 	"errors"
@@ -94,7 +94,7 @@ func TestClientRetriedBodyDrainIsBounded(t *testing.T) {
 	})
 	client := mustNew(t,
 		hqgohttp.WithHTTPClient(&http.Client{Transport: transport}),
-		hqgohttp.WithResponseReadLimit(4),
+		hqgohttp.WithAdvanced(hqgohttp.AdvancedOptions{ResponseReadLimit: 4}),
 		hqgohttp.WithRetryMaxAttempts(2),
 	)
 
@@ -110,7 +110,7 @@ func TestRetryErrorContracts(t *testing.T) {
 
 	var nilErr *hqgohttp.RetryError
 
-	assert.Equal(t, "http.Client.Do: giving up", nilErr.Error())
+	assert.Equal(t, "giving up", nilErr.Error())
 	require.NoError(t, nilErr.Unwrap())
 	require.ErrorIs(t, nilErr, hqgohttp.ErrRetriesExhausted)
 
