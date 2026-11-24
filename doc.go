@@ -22,7 +22,9 @@
 //	defer res.Body.Close()
 //
 // Applications normally import this package as hqgohttp and use the net/http
-// request constructors and types.
+// request constructors and types. The header, method, mime, raw, request, and
+// status subpackages hold the HTTP constants and small types used with the
+// client.
 //
 // # Defaults
 //
